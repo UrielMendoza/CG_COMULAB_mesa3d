@@ -129,7 +129,8 @@ def process_frame(frame, width, height, transformer, xmin_geo, ymin_geo, xmax_ge
 
 def main():
     # Configuración
-    video_path = "./Mesa3D/20241128_151857_todos.mp4"
+    #video_path = "./Mesa3D/20241128_151857_todos.mp4"
+    video_path = "http://192.168.1.66:4747/video"
     show_frames = True
     video_speed = 25
     scale_factor = 0.3
