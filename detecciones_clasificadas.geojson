@@ -1,0 +1,16 @@
+{
+"type": "FeatureCollection",
+"name": "detecciones_clasificadas",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "color": "yellow", "type": "line" }, "geometry": { "type": "Point", "coordinates": [ -98.897246671628679, 18.820498870359319 ] } },
+{ "type": "Feature", "properties": { "color": "yellow", "type": "point" }, "geometry": { "type": "Point", "coordinates": [ -99.099551266770845, 18.826899640982198 ] } },
+{ "type": "Feature", "properties": { "color": "yellow", "type": "line" }, "geometry": { "type": "Point", "coordinates": [ -99.018226180444998, 19.007641230219537 ] } },
+{ "type": "Feature", "properties": { "color": "yellow", "type": "line" }, "geometry": { "type": "Point", "coordinates": [ -99.639022269624576, 19.158558900073746 ] } },
+{ "type": "Feature", "properties": { "color": "yellow", "type": "point" }, "geometry": { "type": "Point", "coordinates": [ -98.356766920088702, 19.414480351297289 ] } },
+{ "type": "Feature", "properties": { "color": "yellow", "type": "point" }, "geometry": { "type": "Point", "coordinates": [ -98.464748027935187, 19.426347781291692 ] } },
+{ "type": "Feature", "properties": { "color": "yellow", "type": "line" }, "geometry": { "type": "Point", "coordinates": [ -99.258181758852828, 19.556643646088617 ] } },
+{ "type": "Feature", "properties": { "color": "green", "type": "point" }, "geometry": { "type": "Point", "coordinates": [ -98.96890428468393, 19.863932672788202 ] } },
+{ "type": "Feature", "properties": { "color": "green", "type": "point" }, "geometry": { "type": "Point", "coordinates": [ -99.098276282858066, 19.888011832303569 ] } }
+]
+}

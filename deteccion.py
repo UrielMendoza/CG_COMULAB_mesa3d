@@ -2,7 +2,7 @@
 import cv2
 import numpy as np
 import geopandas as gpd
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString, Polygon
 from pyproj import Transformer
 import os
 
@@ -14,7 +14,7 @@ def raster_to_geo(cx, cy, width, height, transformer, xmin_geo, ymin_geo, xmax_g
         x_geo = xmin_geo + (cx / width) * (xmax_geo - xmin_geo)
         y_geo = ymin_geo + (1 - cy / height) * (ymax_geo - ymin_geo)
         lon, lat = transformer.transform(x_geo, y_geo)
-        return Point(lon, lat)
+        return (lon, lat)
     except Exception as e:
         print(f"Error en transformación de coordenadas: {e}")
         return None
@@ -54,54 +54,66 @@ def process_frame(frame, width, height, transformer, xmin_geo, ymin_geo, xmax_ge
             area = cv2.contourArea(contour)
             if area < 5: continue
 
-            rect = cv2.minAreaRect(contour)
+            # Aproximación del contorno
+            epsilon = 0.01 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            
+            # Convertir puntos a coordenadas geográficas
+            geo_points = []
+            for point in approx:
+                cx, cy = point[0]
+                coords = raster_to_geo(cx, cy, width, height, transformer,
+                                     xmin_geo, ymin_geo, xmax_geo, ymax_geo)
+                if coords:
+                    geo_points.append(coords)
+            
+            if len(geo_points) < 2:
+                continue
+
+            # Determinar tipo de geometría
+            rect = cv2.minAreaRect(approx)
             (x, y), (w, h), angle = rect
             aspect_ratio = max(w, h) / min(w, h) if min(w, h) > 0 else 0
             
-            # Clasificación mejorada
-            # Dentro del loop de procesamiento de contornos
-            if aspect_ratio > 3.0 and area > 30:
+            geom_type = 'point'
+            geometry = Point(geo_points[0])
+            
+            if aspect_ratio > 3.5 and area > 30:
                 geom_type = 'line'
-                box_points = cv2.boxPoints(rect)
-                box_points = box_points.astype(int)  # Línea corregida
+                geometry = LineString(geo_points)
             elif area > 150 and aspect_ratio < 2.0:
                 geom_type = 'polygon'
-                box_points = cv2.boxPoints(rect)
-                box_points = box_points.astype(int)  # Línea corregida
+                if geo_points[0] != geo_points[-1]:
+                    geo_points.append(geo_points[0])
+                geometry = Polygon(geo_points)
+
+            # Actualizar contadores
+            if color_name == 'yellow':
+                if geom_type == 'point': yellow_points += 1
+                elif geom_type == 'line': yellow_lines += 1
+                else: yellow_polygons += 1
             else:
-                geom_type = 'point'
+                if geom_type == 'point': green_points += 1
+                elif geom_type == 'line': green_lines += 1
+                else: green_polygons += 1
 
-            point = raster_to_geo(x, y, width, height, transformer,
-                                xmin_geo, ymin_geo, xmax_geo, ymax_geo)
-            
-            if point:
-                detections.append({
-                    "geometry": point,
-                    "color": color_name,
-                    "type": geom_type
-                })
-
-                # Actualizar contadores
-                stats = yellow_polygons if color_name == 'yellow' else green_polygons
-                if color_name == 'yellow':
-                    if geom_type == 'point': yellow_points += 1
-                    elif geom_type == 'line': yellow_lines += 1
-                    else: yellow_polygons += 1
+            # Dibujar resultados
+            if show_frames:
+                box_points = cv2.boxPoints(rect).astype(int)
+                if geom_type == 'line':
+                    color = (0, 255, 255) if color_name == 'yellow' else (0, 255, 0)
+                    cv2.drawContours(frame, [box_points], 0, color, 2)
+                elif geom_type == 'polygon':
+                    color = (0, 165, 255) if color_name == 'yellow' else (0, 100, 0)
+                    cv2.drawContours(frame, [approx], -1, color, 2)
                 else:
-                    if geom_type == 'point': green_points += 1
-                    elif geom_type == 'line': green_lines += 1
-                    else: green_polygons += 1
+                    cv2.circle(frame, (int(x), int(y)), 5, (0, 0, 255), -1)
 
-                # Visualización
-                if show_frames:
-                    if geom_type == 'line':
-                        color = (0, 255, 255) if color_name == 'yellow' else (0, 255, 0)
-                        cv2.drawContours(frame, [box_points], 0, color, 2)
-                    elif geom_type == 'polygon':
-                        color = (0, 165, 255) if color_name == 'yellow' else (0, 100, 0)
-                        cv2.drawContours(frame, [box_points], 0, color, 2)
-                    else:
-                        cv2.circle(frame, (int(x), int(y)), 5, (0, 0, 255), -1)
+            detections.append({
+                "geometry": geometry,
+                "color": color_name,
+                "type": geom_type
+            })
 
     # Visualización mejorada
     if show_frames:
@@ -127,9 +139,28 @@ def process_frame(frame, width, height, transformer, xmin_geo, ymin_geo, xmax_ge
 
     return detections
 
+def guardar_geojson(datos, tipo_geom, nombre):
+    features = []
+    for d in datos:
+        if d['geometry'].geom_type.lower() == tipo_geom.lower():
+            feature = {
+                "type": "Feature",
+                "properties": {
+                    "color": d['color'],
+                    "type": d['type']
+                },
+                "geometry": d['geometry'].__geo_interface__
+            }
+            features.append(feature)
+    
+    if features:
+        gdf = gpd.GeoDataFrame.from_features(features, crs="EPSG:4326")
+        gdf.to_file(nombre, driver='GeoJSON')
+
 def main():
     # Configuración
     video_path = "./Mesa3D/20241128_151857_todos.mp4"
+    #video_path = "http://192.168.1.66:4747/video"
     show_frames = True
     video_speed = 25
     scale_factor = 0.3
@@ -162,20 +193,9 @@ def main():
             
             # Guardar en GeoJSONs separados
             if detections:
-                puntos = [d for d in detections if d['type'] == 'point']
-                lineas = [d for d in detections if d['type'] == 'line']
-                poligonos = [d for d in detections if d['type'] == 'polygon']
-
-                for tipo, nombre in zip([puntos, lineas, poligonos], 
-                                      ['puntos', 'lineas', 'poligonos']):
-                    if tipo:
-                        gdf = gpd.GeoDataFrame(
-                            data={'color': [d['color'] for d in tipo]},
-                            geometry=[d['geometry'] for d in tipo],
-                            crs="EPSG:4326"
-                        )
-                        ruta = f"geojson/detecciones_{nombre}.geojson"
-                        gdf.to_file(ruta, driver="GeoJSON")
+                guardar_geojson(detections, 'Point', 'geojson/detecciones_puntos.geojson')
+                guardar_geojson(detections, 'LineString', 'geojson/detecciones_lineas.geojson')
+                guardar_geojson(detections, 'Polygon', 'geojson/detecciones_poligonos.geojson')
 
             # Control de salida
             if cv2.waitKey(video_speed) & 0xFF == ord('q'):
