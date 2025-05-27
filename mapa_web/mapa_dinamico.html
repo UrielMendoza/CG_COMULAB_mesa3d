@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mapa Dinámico Leaflet</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { height: 100vh; width: 100%; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([19.3772, -98.5675], 10); // Centrado inicial
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let markers = {};  // Guardar puntos actuales
+
+        async function loadGeoJSON() {
+            try {
+                const response = await fetch('detecciones_actual.geojson');
+                if (!response.ok) throw new Error('No se pudo cargar el archivo GeoJSON');
+
+                const data = await response.json();
+                const newMarkers = {};
+
+                data.features.forEach(feature => {
+                    const coords = feature.geometry.coordinates;
+                    const key = coords.join(','); // Crear una clave única para cada punto
+                    const color = feature.properties.color || 'blue';
+
+                    if (!markers[key]) { // Si no existe en los markers actuales, añadirlo
+                        const marker = L.circleMarker([coords[1], coords[0]], {
+                            radius: 8,
+                            fillColor: color,
+                            color: '#000',
+                            weight: 1,
+                            opacity: 1,
+                            fillOpacity: 0
+                        }).addTo(map);
+
+                        marker.bindPopup('Punto cargado').openPopup();
+
+                        marker.setStyle({ fillOpacity: 0 });
+                        setTimeout(() => marker.setStyle({ fillOpacity: 0.8 }), 500); // Efecto dinámico
+
+                        markers[key] = marker;
+                    }
+                    newMarkers[key] = markers[key]; // Añadir a la lista de nuevos markers
+                });
+
+                // Eliminar puntos que ya no están presentes en el GeoJSON
+                Object.keys(markers).forEach(key => {
+                    if (!newMarkers[key]) {
+                        map.removeLayer(markers[key]);
+                        delete markers[key];
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error al cargar el GeoJSON:', error);
+            } finally {
+                // Espera 3 segundos antes de la siguiente carga
+                setTimeout(loadGeoJSON, 20000);
+            }
+        }
+
+        loadGeoJSON(); // Inicia la carga asíncrona controlada
+
+    </script>
+</body>
+</html>
