@@ -1,80 +1,648 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-    <title>Mapa Dinámico Leaflet</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-    <style>
-        body { margin: 0; padding: 0; }
-        #map { height: 100vh; width: 100%; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui" />
+  <title>El Carmen de Atrato</title>
+  <link rel="icon" href="data:," />
+  <meta name="description" content="Mapa interactivo de El Carmen de Atrato" />
+  <meta name="keywords" content="El Carmen de Atrato"/>
+  <meta name="author" content="Luis Alejandro Rivera" />
+  <meta name="robots" content="index,follow" />
+  <meta http-equiv="cache-control" content="no-cache"/>
+
+  <!-- Plugins y estilos (rutas exactas solicitadas) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <script src="https://unpkg.com/leaflet@1.9.1/dist/leaflet.js"></script>
+  <link  rel="stylesheet" href="https://unpkg.com/leaflet@1.9.1/dist/leaflet.css" />
+  <script src="./plugins/leaflet-draw/js/leaflet.draw.js"></script>
+  <link  rel="stylesheet" href="./plugins/leaflet-draw/css/leaflet.draw.css" />
+  <script src="./plugins/terraformer/terraformer.js"></script>
+  <script src="./plugins/terraformer/terraformer-wkt-parser.js"></script>
+  <link  rel="stylesheet" href="./css/main.css" />
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; width: 100%; }
+
+    /* Badge de estado */
+    .status-badge {
+      position: absolute; top: 10px; right: 10px; z-index: 1000;
+      background: rgba(0,0,0,0.65); color: #fff; padding: 6px 10px;
+      font-size: 12px; border-radius: 6px; pointer-events: none;
+    }
+    .status-badge.ok   { background: rgba(0,150,60,0.8); }
+    .status-badge.err  { background: rgba(180,0,0,0.8); }
+    .status-badge.load { background: rgba(0,0,0,0.65); }
+
+    .wkt-container {
+      max-height: 100px; overflow-y: auto; background:#f5f5f5;
+      padding: 8px; border-radius: 4px; border: 1px solid #ddd;
+      font-family: monospace; font-size: 12px;
+    }
+    .btn{ padding:8px; border:none; color:#fff; border-radius:4px; cursor:pointer; transition:all .2s ease; }
+    .btn:active{ transform:scale(0.97); }
+    .btn-grey{ background:rgb(169,169,169); } .btn-grey:hover{ background:rgb(150,150,150); }
+    .btn-green{ background:rgb(40,167,97); } .btn-green:hover{ background:rgb(30,140,80); }
+    .btn-blue{ background:rgb(0,119,255); } .btn-blue:hover{ background:rgb(0,100,220); }
+    .btn-purple{ background:rgb(138,43,226); } .btn-purple:hover{ background:rgb(120,0,255); }
+
+    /* Modal */
+    #nombreModal{ position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:2000;
+      display:flex; align-items:center; justify-content:center; }
+    #nombreModal .card{
+      position:relative; background:#f9f9f9; padding:24px; border-radius:12px; width:320px;
+      box-shadow:0 4px 16px rgba(0,0,0,0.2); font-family:sans-serif; color:#333;
+    }
+    #nombreModal .close{ position:absolute; top:12px; right:12px; background:transparent;
+      border:none; font-size:20px; font-weight:bold; color:#999; cursor:pointer; }
+    .custom-marker{ display:flex; align-items:center; justify-content:center; }
+  </style>
 </head>
 <body>
-    <div id="map"></div>
-    
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <script>
-        const map = L.map('map').setView([19.3772, -98.5675], 10); // Centrado inicial
+  <div id="map"></div>
+  <div id="status" class="status-badge load">Cargando…</div>
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 18,
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
-
-        let markers = {};  // Guardar puntos actuales
-
-        async function loadGeoJSON() {
-            try {
-                const response = await fetch('detecciones_actual.geojson');
-                if (!response.ok) throw new Error('No se pudo cargar el archivo GeoJSON');
-
-                const data = await response.json();
-                const newMarkers = {};
-
-                data.features.forEach(feature => {
-                    const coords = feature.geometry.coordinates;
-                    const key = coords.join(','); // Crear una clave única para cada punto
-                    const color = feature.properties.color || 'blue';
-
-                    if (!markers[key]) { // Si no existe en los markers actuales, añadirlo
-                        const marker = L.circleMarker([coords[1], coords[0]], {
-                            radius: 8,
-                            fillColor: color,
-                            color: '#000',
-                            weight: 1,
-                            opacity: 1,
-                            fillOpacity: 0
-                        }).addTo(map);
-
-                        marker.bindPopup('Punto cargado').openPopup();
-
-                        marker.setStyle({ fillOpacity: 0 });
-                        setTimeout(() => marker.setStyle({ fillOpacity: 0.8 }), 500); // Efecto dinámico
-
-                        markers[key] = marker;
-                    }
-                    newMarkers[key] = markers[key]; // Añadir a la lista de nuevos markers
-                });
-
-                // Eliminar puntos que ya no están presentes en el GeoJSON
-                Object.keys(markers).forEach(key => {
-                    if (!newMarkers[key]) {
-                        map.removeLayer(markers[key]);
-                        delete markers[key];
-                    }
-                });
-
-            } catch (error) {
-                console.error('Error al cargar el GeoJSON:', error);
-            } finally {
-                // Espera 3 segundos antes de la siguiente carga
-                setTimeout(loadGeoJSON, 20000);
-            }
+  <script>
+  /* ===========================================
+     0) Traducción Leaflet.Draw (equivalente a traducc.js)
+     =========================================== */
+  L.drawLocal = {
+    draw: {
+      toolbar: {
+        actions: { title:'Cancelar dibujo', text:'Cancelar' },
+        finish:  { title:'Terminar dibujo', text:'Terminar' },
+        undo:    { title:'Eliminar último punto dibujado', text:'Eliminar último punto' },
+        buttons: {
+          polyline:'Dibujar una línea',
+          polygon:'Dibujar un polígono',
+          rectangle:'Dibujar un rectángulo',
+          circle:'Dibujar un círculo con radio personalizado',
+          marker:'Dibujar un marcador (punto)',
+          circlemarker:'Dibujar un marcador circular (10 metros)'
         }
+      },
+      handlers: {
+        circle: { tooltip:{ start:'Haz clic y arrastra para dibujar un círculo.' }, radius:'Radio' },
+        circlemarker: { tooltip:{ start:'Haz clic en el mapa para colocar un marcador circular de 10 metros de diámetro.' } },
+        marker: { tooltip:{ start:'Haz clic en el mapa para colocar un marcador.' } },
+        polygon:{ tooltip:{ start:'Haz clic para empezar a dibujar la figura.', cont:'Haz clic para continuar dibujando la figura.', end:'Haz clic en el primer punto para cerrar esta figura.' } },
+        polyline:{ error:'<strong>Error:</strong> Una línea no puede cruzar sobre sí misma',
+                   tooltip:{ start:'Haz clic para comenzar a dibujar la línea.', cont:'Haz clic para continuar dibujando la línea.', end:'Haz clic en el último punto para terminar la línea.' } },
+        rectangle:{ tooltip:{ start:'Haz clic y arrastra para dibujar un rectángulo.' } },
+        simpleshape:{ tooltip:{ end:'Suelta el mpuse para terminar de dibujar.' } }
+      }
+    },
+    edit: {
+      toolbar: {
+        actions: {
+          save:{ title:'Guardar cambios', text:'Guardar' },
+          cancel:{ title:'Cancelar edición, descarta todos los cambios', text:'Cancelar' },
+          clearAll:{ title:'Limpiar todas las figuras', text:'Limpiar todo lo dibujado' }
+        },
+        buttons: {
+          edit:'Editar figuras', editDisabled:'No hay figuras para editar',
+          remove:'Eliminar figuras', removeDisabled:'No hay figuras para eliminar'
+        }
+      },
+      handlers: {
+        edit:{ tooltip:{ text:'Arrastra los marcadores para editar los elementos.', subtext:'Haz clic en cancelar para deshacer los cambios.' } },
+        remove:{ tooltip:{ text:'Haz clic en un elemento para eliminarlo.' } }
+      }
+    }
+  };
 
-        loadGeoJSON(); // Inicia la carga asíncrona controlada
+  /* ===========================================
+     1) Mapa base + grupos y control de dibujo
+     =========================================== */
+  const map = L.map('map', { center:[19.3772,-98.5675], zoom:12, maxZoom:22 });
+  const googleSat = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+    attribution:'&copy; Google Maps', maxZoom:22
+  }).addTo(map);
 
-    </script>
+  const drawnItems    = L.featureGroup().addTo(map);  // figuras dibujadas
+  const detectedGroup = L.featureGroup().addTo(map);  // detecciones dinámicas
+
+  map.addControl(new L.Control.Draw({
+    edit: { featureGroup: drawnItems, poly:{ allowIntersection:false } },
+    draw: { polygon:{ allowIntersection:false, showArea:true } }
+  }));
+
+  /* ===========================================
+     2) Utilidades generales
+     =========================================== */
+  const statusEl = document.getElementById('status');
+  const UPDATE_MS = 15000; // <-- intervalo más lento (15 s). Ajusta si quieres.
+
+  function _round(num,len){ return Math.round(num*Math.pow(10,len))/Math.pow(10,len); }
+  function getLayerTypeName(layer){
+    if(layer instanceof L.Marker && !(layer instanceof L.CircleMarker)) return "Punto";
+    if(layer instanceof L.CircleMarker) return "Círculo";
+    if(layer instanceof L.Polygon && !(layer instanceof L.Rectangle)) return "Polígono";
+    if(layer instanceof L.Polyline) return "Línea";
+    return "Figura";
+  }
+  function createCircularPolygon(center, radius){
+    const R=6378137, n=36, coords=[];
+    for(let i=0;i<n;i++){
+      const ang=i*360/n*Math.PI/180;
+      const lat=center.lat+(radius/R)*Math.sin(ang)*180/Math.PI;
+      const lng=center.lng+(radius/R)*Math.cos(ang)*180/Math.PI/Math.cos(center.lat*Math.PI/180);
+      coords.push([lng,lat]);
+    }
+    coords.push(coords[0]);
+    return { type:"Feature", geometry:{ type:"Polygon", coordinates:[coords] }, properties:{} };
+  }
+  function hexToKMLColor(hex, opacity=1){
+    if(!hex || !/^#([0-9A-F]{3}){1,2}$/i.test(hex)) hex='#3388ff';
+    const alpha=Math.round(opacity*255).toString(16).padStart(2,'0');
+    const full=hex.length===4?`#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`:hex;
+    const r=full.substring(1,3), g=full.substring(3,5), b=full.substring(5,7);
+    return alpha+b+g+r;
+  }
+
+  /* ===========================================
+     3) Registro global id -> layer (para todo)
+     =========================================== */
+  const layerRegistry = new Map();
+  function registerLayer(layer){ layerRegistry.set(L.stamp(layer), layer); }
+  function unregisterLayer(layer){ layerRegistry.delete(L.stamp(layer)); }
+  function getAnyLayerById(id){ return layerRegistry.get(id) || null; }
+
+  /* ===========================================
+     4) Modal edición de props y estilos
+     =========================================== */
+  function handleEscapeKey(e){ if(e.key==='Escape') closeNombreModal(); }
+  function closeNombreModal(){
+    const m=document.getElementById('nombreModal');
+    if(m) m.remove();
+    document.removeEventListener('keydown',handleEscapeKey);
+  }
+  function openNombreModal(layerId){
+    const layer=getAnyLayerById(layerId);
+    if(!layer){ console.error("Capa no encontrada:", layerId); return; }
+
+    const props = layer.feature?.properties || {};
+    const currentNombre = props.nombre || "";
+    const currentDescripcion = props.descripcion || "";
+    const currentColor = layer.options.color || layer.options.fillColor || "#3388ff";
+    const currentFillOpacity = layer.options.fillOpacity ?? 0.5;
+    const currentWeight = layer.options.weight ?? 2;
+
+    const isMarker = (layer instanceof L.Marker) && !(layer instanceof L.CircleMarker);
+    const isCircleMarker = layer instanceof L.CircleMarker;
+    const isPolyline = (layer instanceof L.Polyline) && !(layer instanceof L.Polygon);
+
+    const preset = ['#ff0000','#00cc00','#0000ff','#ffff00','#ff00ff','#00ffff','#a52a2a','#ff9900','#3388ff','#000000','#ffffff'];
+    const isCustom = !preset.some(c=>c.toLowerCase()===String(currentColor).toLowerCase());
+
+    const modal = `
+    <div id="nombreModal">
+      <div class="card">
+        <button class="close" onclick="closeNombreModal()" title="Cerrar">&times;</button>
+        <h3 style="margin:0 0 16px 0;font-size:18px;color:#222;">Editar propiedades</h3>
+        <label>Nombre:</label>
+        <input id="nombreInput" type="text" value="${currentNombre}" style="width:100%;padding:10px;margin-bottom:12px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box;"/>
+        <label>Descripción:</label>
+        <textarea id="descripcionInput" rows="3" style="width:100%;padding:10px;margin-bottom:12px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box;resize:vertical;">${currentDescripcion}</textarea>
+
+        <label style="font-weight:600;">Color:</label>
+        <div id="colorButtons" style="margin:8px 0 16px;display:flex;flex-wrap:wrap;gap:6px;">
+          ${preset.map(c=>`<button class="color-btn" data-color="${c}" style="background:${c};width:24px;height:24px;border:1px solid #ccc;border-radius:50%;cursor:pointer;"></button>`).join('')}
+          <button id="customColorBtn" title="Color personalizado" style="background:${isCustom?currentColor:'linear-gradient(45deg, red, yellow, green, cyan, blue, magenta)'};width:24px;height:24px;border:1px solid #ccc;border-radius:50%;cursor:pointer;"></button>
+          <input type="color" id="customColorPicker" style="display:none;" value="${isCustom?currentColor:'#3388ff'}" />
+        </div>
+
+        ${ isMarker || isPolyline ? '' : `
+        <label style="font-weight:600;">Transparencia: <span id="opacityValue">${currentFillOpacity}</span></label>
+        <input id="opacityRange" type="range" min="0" max="1" step="0.1" value="${currentFillOpacity}" style="width:100%;margin-bottom:16px;"/>`}
+
+        ${ isMarker ? '' : `
+        <label style="font-weight:600;">Grosor de línea: <span id="weightValue">${currentWeight}</span></label>
+        <input id="weightRange" type="range" min="1" max="10" step="1" value="${currentWeight}" data-original="${currentWeight}" style="width:100%;margin-bottom:20px;"/>`}
+
+        ${ (isMarker||isPolyline) ? `<input type="hidden" id="opacityRange" value="${currentFillOpacity}">` : '' }
+        ${ isMarker ? `<input type="hidden" id="weightRange" value="${currentWeight}">` : '' }
+
+        <div style="text-align:right;">
+          <button class="btn btn-grey" onclick="closeNombreModal()">Cancelar</button>
+          <button class="btn btn-blue" onclick="saveNombre(${layerId})">Guardar</button>
+        </div>
+      </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', modal);
+
+    function selectColor(color){
+      document.querySelectorAll('.color-btn').forEach(b=>b.style.outline='none');
+      const cbtn = Array.from(document.querySelectorAll('.color-btn')).find(b=>b.dataset.color.toLowerCase()===String(color).toLowerCase());
+      if(cbtn) cbtn.style.outline='2px solid #000';
+      document.getElementById('colorButtons').setAttribute('data-selected-color', color);
+      const customBtn = document.getElementById('customColorBtn');
+      customBtn.style.outline = (!cbtn ? '2px solid #000' : 'none');
+    }
+    document.querySelectorAll('.color-btn').forEach(btn=> btn.addEventListener('click', ()=> selectColor(btn.dataset.color)));
+    const colorPicker=document.getElementById('customColorPicker');
+    const customBtn=document.getElementById('customColorBtn');
+    customBtn.addEventListener('click', ()=> colorPicker.click());
+    colorPicker.addEventListener('input', e=>{ const c=e.target.value; customBtn.style.background=c; selectColor(c); });
+    selectColor(currentColor);
+
+    const op=document.getElementById('opacityRange'); if(op) op.addEventListener('input', e=> document.getElementById('opacityValue').textContent=e.target.value);
+    const wt=document.getElementById('weightRange');  if(wt) wt.addEventListener('input', e=> document.getElementById('weightValue').textContent=e.target.value);
+    document.addEventListener('keydown', handleEscapeKey);
+  }
+
+  function isDetectionLayer(layer){
+    for(const [,v] of currentDetectionLayers.entries()){
+      if(v===layer) return true;
+    }
+    return false;
+  }
+
+  function saveNombre(layerId){
+    const layer=getAnyLayerById(layerId);
+    if(!layer) return;
+
+    const nombre=document.getElementById('nombreInput').value;
+    const descripcion=document.getElementById('descripcionInput').value;
+    const selectedColor=document.getElementById('colorButtons').getAttribute('data-selected-color') || "#3388ff";
+    const fillOpacity=parseFloat(document.getElementById('opacityRange').value);
+    const weightInput=document.getElementById('weightRange');
+    const weight=weightInput ? parseInt(weightInput.value) : undefined;
+
+    if(!layer.feature) layer.feature=layer.toGeoJSON();
+    if(!layer.feature.properties) layer.feature.properties={};
+    layer.feature.properties.nombre = (nombre.trim()===''? null : nombre);
+    layer.feature.properties.descripcion = descripcion;
+
+    if(layer instanceof L.Marker && !(layer instanceof L.CircleMarker)){
+      const icon=L.divIcon({
+        className:'custom-marker',
+        html:`<div style="background-color:${selectedColor}; width:12px; height:12px; border-radius:50%; border:2px solid white; box-shadow:0 0 5px rgba(0,0,0,0.3);"></div>`,
+        iconSize:[16,16], iconAnchor:[8,8]
+      });
+      layer.setIcon(icon);
+      layer.options.color=selectedColor;
+    } else if(layer.setStyle){
+      layer.setStyle({
+        color:selectedColor,
+        weight:(weight!==undefined? weight : (layer.options.weight ?? 2)),
+        opacity:1,
+        fillColor:selectedColor,
+        fillOpacity:fillOpacity
+      });
+    }
+
+    bindPopupForLayer(layer);
+
+    // Persistir si es detección
+    if(isDetectionLayer(layer)) persistAnnotationForLayer(layer);
+
+    closeNombreModal();
+  }
+
+  /* ===========================================
+     5) Dibujo del usuario
+     =========================================== */
+  map.on(L.Draw.Event.CREATED, function(ev){
+    const layer=ev.layer;
+    if(layer.setStyle) layer.setStyle({ color:'#3388ff', weight:2, fillColor:'#3388ff', fillOpacity:0.5 });
+    layer.feature=layer.toGeoJSON();
+    bindPopupForLayer(layer);
+    drawnItems.addLayer(layer);
+    registerLayer(layer);
+  });
+
+  map.on(L.Draw.Event.EDITED, function(ev){
+    ev.layers.eachLayer(function(layer){
+      if(layer instanceof L.CircleMarker){
+        const r=layer.getRadius(); const center=layer.getLatLng();
+        const gjPoly=createCircularPolygon(center, r);
+        gjPoly.properties={ ...(layer.feature?.properties||{}), radius:_round(r,2) };
+        layer.feature=gjPoly;
+      } else {
+        const gj=layer.toGeoJSON();
+        gj.properties={ ...(layer.feature?.properties||{}) };
+        layer.feature=gj;
+      }
+      bindPopupForLayer(layer);
+    });
+  });
+
+  /* ===========================================
+     6) Popups (con Editar/Descargas/Compartir)
+     =========================================== */
+  function bindPopupForLayer(layer){
+    const gj = layer.feature || layer.toGeoJSON();
+
+    let wkt = '';
+    if (window.Terraformer && Terraformer.WKT && gj && gj.geometry) {
+      try { wkt = Terraformer.WKT.convert(gj.geometry); } catch(_) { wkt = ''; }
+    }
+
+    const name=getLayerTypeName(layer);
+    const nombre=gj.properties?.nombre ?? null;
+    const descripcion=gj.properties?.descripcion ?? "";
+
+    let content="";
+    content += `<strong>Nombre:</strong> <span>${nombre??''}</span><br>`;
+    content += `<strong>Descripción:</strong> <span>${descripcion}</span><br>`;
+
+    // Botón editar
+    content += `<button class="btn btn-grey" onclick="openNombreModal(${L.stamp(layer)})"><i class="fa fa-edit" style="margin-right:6px;"></i>Editar</button><br><hr/>`;
+
+    if(wkt){
+      content += `<strong>Figura en WKT:</strong><br><div class="wkt-container" id="wkt-container">${wkt}</div><br>`;
+      content += `<button class="btn btn-grey" onclick="copyWKTtoClipboard()"><i class="fa fa-copy" style="margin-right:6px;"></i>Copiar</button>`;
+
+      const displayName = (nombre!==null)? nombre : name;
+      const safeName = displayName.replace(/"/g,'\\"');
+      const whatsappText = (nombre!==null || descripcion!=='')
+        ? `*Nombre:* ${nombre!==null?nombre:'Sin nombre'}\n*Descripción:* ${descripcion}\n*WKT:*\n\n${wkt}`
+        : wkt;
+
+      content += `
+        <a href="https://wa.me/?text=${encodeURIComponent(whatsappText)}" target="_blank" style="text-decoration:none;margin-left:10px;">
+          <button class="btn btn-grey"><i class="fab fa-whatsapp" style="margin-right:6px;"></i>Compartir</button>
+        </a>
+        <p style="font-size:12px;">Valida el WKT en <a href="https://wktmap.com/" target="_blank">wktmap.com</a></p>
+        <hr/>
+        <div><strong>Descargar:</strong><br><br>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-green" onclick='downloadGeoJSON(${JSON.stringify(gj)}, "${safeName}")'><i class="fa fa-download" style="margin-right:6px;"></i>GeoJSON</button>
+            <button class="btn btn-blue" onclick='downloadKML(${JSON.stringify(wkt)}, "${safeName}")'><i class="fa fa-download" style="margin-right:6px;"></i>KML</button>
+            <button class="btn btn-purple" onclick='convertWKTtoCSV(${JSON.stringify(wkt)}, "${safeName}")'><i class="fa fa-download" style="margin-right:6px;"></i>CSV</button>
+          </div>
+        </div>`;
+    } else {
+      content += `<em style="color:#888">WKT no disponible (Terraformer no cargó).</em>`;
+    }
+
+    layer.bindPopup(content);
+  }
+
+  function copyWKTtoClipboard(){
+    const c=document.getElementById('wkt-container');
+    const txt=c ? (c.textContent||c.innerText) : '';
+    navigator.clipboard.writeText(txt).catch(()=>{});
+  }
+
+  // Descargas (GeoJSON / KML / CSV) – simples
+  function downloadGeoJSON(geojson, name){
+    const nombreArchivo = name || "Figura";
+    const s = JSON.stringify(geojson, null, 2);
+    const blob = new Blob([s], { type:'application/json' });
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nombreArchivo+'.geojson'; a.click();
+  }
+  function hexToKMLColor(hex, opacity=1){
+    if(!hex || !/^#([0-9A-F]{3}){1,2}$/i.test(hex)) hex='#3388ff';
+    const alpha=Math.round(opacity*255).toString(16).padStart(2,'0');
+    const full=hex.length===4?`#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`:hex;
+    const r=full.substring(1,3), g=full.substring(3,5), b=full.substring(5,7);
+    return alpha+b+g+r;
+  }
+  function downloadKML(wkt, name){
+    let geojson;
+    try{ geojson = Terraformer.WKT.parse(wkt); } catch(e){ console.error("WKT inválido", e); return; }
+    const nombreArchivo = name || "Figura";
+    const nombreParaKML = name || "Sin nombre";
+
+    let coordinatesKML = "";
+    if(geojson.type==='Point'){
+      coordinatesKML = `<Point><coordinates>${geojson.coordinates[0]},${geojson.coordinates[1]},0</coordinates></Point>`;
+    } else if(geojson.type==='Polygon'){
+      coordinatesKML = `<Polygon><outerBoundaryIs><LinearRing><coordinates>`;
+      geojson.coordinates[0].forEach(c=> coordinatesKML += `${c[0]},${c[1]},0 `);
+      coordinatesKML += `</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+    } else if(geojson.type==='LineString'){
+      coordinatesKML = `<LineString><coordinates>`;
+      geojson.coordinates.forEach(c=> coordinatesKML += `${c[0]},${c[1]},0 `);
+      coordinatesKML += `</coordinates></LineString>`;
+    } else { console.warn("Tipo no soportado KML:", geojson.type); return; }
+
+    const color = '#3388ff', opacity=1, weight=2;
+    const kmlColor = hexToKMLColor(color, opacity);
+    const styleKML = (geojson.type==='Polygon')
+      ? `<Style><LineStyle><color>${kmlColor}</color><width>${weight}</width></LineStyle><PolyStyle><color>${hexToKMLColor(color,0.5)}</color><fill>1</fill><outline>1</outline></PolyStyle></Style>`
+      : `<Style><LineStyle><color>${kmlColor}</color><width>${weight}</width></LineStyle></Style>`;
+
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>
+<name>${nombreParaKML}</name><description><![CDATA[]]></description>${styleKML}${coordinatesKML}
+</Placemark></Document></kml>`;
+
+    const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nombreArchivo+'.kml'; a.click();
+  }
+  function convertWKTtoCSV(wkt, name){
+    try{
+      const gj=Terraformer.WKT.parse(wkt);
+      const nombreArchivo = name || "Figura";
+      const nombreParaCSV  = name || "Sin nombre";
+      let csv = "type,x,y,nombre,descripcion\n";
+      const esc = s => `"${String(s).replace(/"/g,'""')}"`;
+
+      if(gj.type==='Point'){
+        const [x,y]=gj.coordinates; csv += `Point,${x},${y},${esc(nombreParaCSV)},${esc('')}\n`;
+      } else if(gj.type==='Polygon'){
+        gj.coordinates[0].forEach(([x,y])=> csv += `Polygon,${x},${y},${esc(nombreParaCSV)},${esc('')}\n`);
+      } else if(gj.type==='LineString'){
+        gj.coordinates.forEach(([x,y])=> csv += `Line,${x},${y},${esc(nombreParaCSV)},${esc('')}\n`);
+      } else { console.warn("Tipo no soportado CSV:", gj.type); return; }
+
+      const blob=new Blob([csv],{type:'text/csv'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nombreArchivo+'.csv'; a.click();
+    } catch(e){ console.error("Error CSV", e); }
+  }
+
+  /* ===========================================
+     7) Detecciones dinámicas con etiquetas persistentes
+     =========================================== */
+  function loadAnnotationsStore(){
+    try{ const s=localStorage.getItem('detections_annotations'); return s? JSON.parse(s):{}; }catch(e){ return {}; }
+  }
+  const annotationsStore = loadAnnotationsStore();
+
+  function featureKey(f){
+    const type=f.geometry?.type || 'Unknown';
+    const propsColor=f.properties?.color || '';
+    function roundCoords(coords){
+      if(typeof coords[0]==='number'){ return [Number(coords[0].toFixed(6)), Number(coords[1].toFixed(6))]; }
+      else { return coords.map(roundCoords); }
+    }
+    const rounded=roundCoords(f.geometry?.coordinates || []);
+    return JSON.stringify({t:type, c:propsColor, g:rounded});
+  }
+
+  function applyAnnotationToLayer(layer, f){
+    const key=featureKey(f);
+    const ann=annotationsStore[key];
+    if(!ann) { layer.feature=f; return; }
+
+    if(!f.properties) f.properties={};
+    f.properties.nombre      = ann.nombre      ?? f.properties.nombre ?? null;
+    f.properties.descripcion = ann.descripcion ?? f.properties.descripcion ?? "";
+
+    const color=ann.style?.color, weight=ann.style?.weight, fillOpacity=ann.style?.fillOpacity;
+
+    if(layer instanceof L.Marker && !(layer instanceof L.CircleMarker) && color){
+      layer.setIcon(L.divIcon({
+        className:'custom-marker',
+        html:`<div style="background-color:${color}; width:12px; height:12px; border-radius:50%; border:2px solid white; box-shadow:0 0 5px rgba(0,0,0,0.3);"></div>`,
+        iconSize:[16,16], iconAnchor:[8,8]
+      }));
+      layer.options.color=color;
+    } else if(layer.setStyle){
+      const st={};
+      if(color){ st.color=color; st.fillColor=color; }
+      if(weight!=null) st.weight=weight;
+      if(fillOpacity!=null) st.fillOpacity=fillOpacity;
+      if(Object.keys(st).length) layer.setStyle(st);
+    }
+
+    layer.feature=f;
+    bindPopupForLayer(layer);
+  }
+
+  function persistAnnotationForLayer(layer){
+    const f = layer.feature || layer.toGeoJSON();
+    const key = featureKey(f);
+    const entry = {
+      nombre: f.properties?.nombre ?? null,
+      descripcion: f.properties?.descripcion ?? '',
+      style: {
+        color: layer.options.color || layer.options.fillColor || f.properties?.color || null,
+        weight: layer.options.weight ?? null,
+        fillOpacity: layer.options.fillOpacity ?? null
+      }
+    };
+    annotationsStore[key]=entry;
+    try{ localStorage.setItem('detections_annotations', JSON.stringify(annotationsStore)); }catch(_){}
+  }
+
+  function styleByProps(f){
+    const col=f.properties?.color || '#3388ff';
+    return { color:col, weight:3, fillColor:col, fillOpacity:0.35 };
+  }
+  function pointToLayerFn(f, latlng){
+    const col=f.properties?.color || '#3388ff';
+    return L.circleMarker(latlng, { radius:6, color:'#000', weight:1, fillColor:col, fillOpacity:0.8, opacity:1 });
+  }
+  function onEachDetectionFeature(f, layer){
+    layer.feature=f;
+    applyAnnotationToLayer(layer, f);
+    bindPopupForLayer(layer);
+    // Doble clic abre edición; el clic normal solo muestra popup
+    layer.on('dblclick', ()=> openNombreModal(L.stamp(layer)));
+  }
+
+  const currentDetectionLayers = new Map(); // key -> sublayer
+
+  async function fetchJSON(url){
+    try{
+      const res=await fetch(url, { cache:'no-store' });
+      if(!res.ok) return null;
+      const text=await res.text();
+      if(!text.trim()) return null;
+      return JSON.parse(text);
+    }catch(e){ console.warn('No se pudo leer', url, e); return null; }
+  }
+
+  // ¿la capa es visible en el mapa actual?
+  function layerIsVisible(layer){
+    if (layer.getLatLng) {
+      return map.getBounds().contains(layer.getLatLng());
+    }
+    if (layer.getBounds) {
+      return map.getBounds().intersects(layer.getBounds());
+    }
+    return true;
+  }
+
+  // si la nueva capa cae fuera de vista, ampliar a incluir vista actual + capa
+  function maybeRefitOnNewLayer(layer){
+    if (layerIsVisible(layer)) return;
+    let combined = map.getBounds().pad(0.05);
+    if (layer.getBounds) {
+      const b = layer.getBounds();
+      combined = combined.extend(b.getNorthEast()).extend(b.getSouthWest());
+    } else if (layer.getLatLng) {
+      combined = combined.extend(layer.getLatLng());
+    }
+    map.fitBounds(combined.pad(0.12), { animate:true });
+  }
+
+  async function loadDetectionsLoop(){
+    statusEl.className='status-badge load';
+    statusEl.textContent='Cargando…';
+
+    // lee los 3 archivos si existen (rutas pedidas)
+    const [gjP, gjL, gjG] = await Promise.all([
+      fetchJSON('../geojson/detecciones_puntos.geojson'),
+      fetchJSON('../geojson/detecciones_lineas.geojson'),
+      fetchJSON('../geojson/detecciones_poligonos.geojson')
+    ]);
+
+    const feats=[];
+    if(gjP && Array.isArray(gjP.features)) feats.push(...gjP.features);
+    if(gjL && Array.isArray(gjL.features)) feats.push(...gjL.features);
+    if(gjG && Array.isArray(gjG.features)) feats.push(...gjG.features);
+
+    const seen=new Set();
+
+    for(const f of feats){
+      const key=featureKey(f);
+      seen.add(key);
+      if(currentDetectionLayers.has(key)){
+        const lyr=currentDetectionLayers.get(key);
+        lyr.feature=f;
+        applyAnnotationToLayer(lyr, f);
+        bindPopupForLayer(lyr);
+      } else {
+        const group = L.geoJSON(f, { style:styleByProps, pointToLayer:pointToLayerFn, onEachFeature:onEachDetectionFeature })
+                       .addTo(detectedGroup);
+
+        group.eachLayer(sub=>{
+          currentDetectionLayers.set(key, sub);
+          registerLayer(sub);
+          // animación de aparición
+          if(sub.setStyle){
+            const st=sub.options;
+            sub.setStyle({ ...st, opacity:0, fillOpacity:(st.fillOpacity??0)*0.0 });
+            setTimeout(()=> sub.setStyle({ ...st, opacity:1, fillOpacity:st.fillOpacity??0.35 }), 160);
+          }
+          // SOLO popup en click; edición en doble clic (ya configurado arriba)
+          // sub.on('click', ()=> openNombreModal(L.stamp(sub))); // <- eliminado
+          // si está fuera de vista, ampliar para incluirla
+          maybeRefitOnNewLayer(sub);
+        });
+      }
+    }
+
+    // bajas
+    for(const [key, lyr] of currentDetectionLayers.entries()){
+      if(!seen.has(key)){
+        detectedGroup.removeLayer(lyr);
+        unregisterLayer(lyr);
+        currentDetectionLayers.delete(key);
+      }
+    }
+
+    statusEl.className='status-badge ok';
+    statusEl.textContent=`Actualizado ${new Date().toLocaleTimeString()}`;
+    setTimeout(loadDetectionsLoop, UPDATE_MS);
+  }
+  loadDetectionsLoop();
+
+  // Auto-fit una vez cuando aparezcan detecciones (si quieres mantenerlo)
+  let didFit=false;
+  const fitTimer=setInterval(()=>{
+    if(!didFit && detectedGroup.getLayers().length>0){
+      map.fitBounds(detectedGroup.getBounds().pad(0.15));
+      didFit=true; clearInterval(fitTimer);
+    }
+  }, 1000);
+  </script>
 </body>
 </html>
