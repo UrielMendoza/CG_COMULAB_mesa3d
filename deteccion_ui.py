@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Detector con UI (Tkinter) – v5
-Cambios v5:
-- Botones: Pausar captura / Reanudar captura / Recalibrar ahora.
-- Sin opción de webcam (solo Archivo o URL/DroidCam).
-- La pausa detiene el procesamiento y guardado, pero el video se sigue mostrando.
-- Overlay "PAUSADO" cuando la captura está detenida.
-- Recalibración automática cada N frames (default 100) + manual por botón.
+Detector con UI (Tkinter) – v5 (con modo sin calibración)
 
-Requiere: opencv-python, numpy, geopandas, shapely, pyproj
-pip install opencv-python numpy geopandas shapely pyproj
+Cambios:
+- Si no hay cruces verdes, NO se corta el procesamiento: se detecta visualmente sobre
+  el frame completo, sin georreferenciar ni guardar GeoJSON.
+- Overlay "SIN CALIBRACIÓN" cuando no hay homografía activa.
+- Cuando se logran detectar cruces (al inicio o en cualquier ciclo), se activa la
+  georreferencia, se recorta y se guarda GeoJSON como antes.
 """
 
 import cv2
@@ -49,7 +47,6 @@ DEFAULT_PARAMS = {
 
 def init_transformer(epsg_src=32614, epsg_dst=4326):
     return Transformer.from_crs(epsg_src, epsg_dst, always_xy=True)
-
 
 def find_green_cross_corners(frame):
     blurred = cv2.GaussianBlur(frame, (3, 3), 0)
@@ -100,7 +97,6 @@ def find_green_cross_corners(frame):
 
     return corners, (xmin, ymin, xmax, ymax), {"mask_green": mask}
 
-
 def compute_homography_from_corners(corners_img, geo_bounds_utm):
     xmin, ymin, xmax, ymax = geo_bounds_utm
     dst_pts = np.array([
@@ -112,14 +108,12 @@ def compute_homography_from_corners(corners_img, geo_bounds_utm):
     H, _ = cv2.findHomography(corners_img, dst_pts, method=cv2.RANSAC)
     return H
 
-
 def raster_to_geo_homography(cx, cy, H, transformer):
     pt = np.array([[cx, cy]], dtype=np.float32)
     pt_h = cv2.perspectiveTransform(np.array([pt]), H)[0][0]
     xutm, yutm = float(pt_h[0]), float(pt_h[1])
     lon, lat = transformer.transform(xutm, yutm)
     return (lon, lat)
-
 
 def refine_mask_for_lines(mask, k_long=11, k_short=3, iters=1):
     k_long = max(3, int(k_long) | 1)   # impar ≥3
@@ -131,7 +125,6 @@ def refine_mask_for_lines(mask, k_long=11, k_short=3, iters=1):
     m_h = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k_h, iterations=iters)
     m_v = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k_v, iterations=iters)
     return cv2.bitwise_or(m_h, m_v)
-
 
 def contour_line_metrics(cnt):
     if len(cnt) < 2:
@@ -148,16 +141,16 @@ def contour_line_metrics(cnt):
     aspect = float(length / width)
     return length, width, aspect
 
-
 def draw_small(window_name, frame, scale):
     h, w = frame.shape[:2]
     resized = cv2.resize(frame, (max(1, int(w * scale)), max(1, int(h * scale))))
     cv2.imshow(window_name, resized)
 
-
 def guardar_geojson(datos, tipo_geom, nombre):
     features = []
     for d in datos:
+        if d['geometry'] is None:
+            continue  # sin georreferencia: no guardamos nada
         if d['geometry'].geom_type.lower() == tipo_geom.lower():
             feature = {
                 "type": "Feature",
@@ -166,9 +159,12 @@ def guardar_geojson(datos, tipo_geom, nombre):
             }
             features.append(feature)
     if features:
-        gdf = gpd.GeoDataFrame.from_features(features, crs="EPSG:4326")
-        gdf.to_file(nombre, driver='GeoJSON')
-
+        try:
+            gdf = gpd.GeoDataFrame.from_features(features, crs="EPSG:4326")
+            gdf.to_file(nombre, driver='GeoJSON')
+        except Exception as e:
+            # Evita romper el loop si hay bloqueo de archivo o falta de permisos
+            print(f"[WARN] No se pudo escribir {nombre}: {e}")
 
 # ================== Pipeline principal ==================
 
@@ -184,11 +180,15 @@ class LiveParams:
         with self._lock:
             return dict(self._d)
 
-
-def process_frame_with_offset(frame_cropped, transformer, H, xoff, yoff, show_mode, scale, params):
+def process_frame_generic(frame_in, transformer, H, xoff, yoff, show_mode, scale, params):
+    """
+    Procesa un frame (recortado o completo).
+    - Si H es None => SIN georreferencia: dibuja y cuenta, pero 'geometry' va en None (no se guardará).
+    - Si H existe => georreferencia normal.
+    """
     detections = []
 
-    blurred = cv2.GaussianBlur(frame_cropped, (3, 3), 0)
+    blurred = cv2.GaussianBlur(frame_in, (3, 3), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
     color_ranges = {
@@ -215,19 +215,21 @@ def process_frame_with_offset(frame_cropped, transformer, H, xoff, yoff, show_mo
             (x, y), (w2, h2), angle = rect
             aspect_ratio = max(w2, h2) / max(min(w2, h2), 1e-6)
 
-            # Proyecta a geo
+            # Si hay H => proyecta; si no, quedará geometry=None (no se guardará)
             geo_points = []
-            for point in approx:
-                cx, cy = point[0]
-                lonlat = raster_to_geo_homography(cx + xoff, cy + yoff, H, transformer)
-                if lonlat:
-                    geo_points.append(lonlat)
+            if H is not None:
+                for point in approx:
+                    cx, cy = point[0]
+                    lonlat = raster_to_geo_homography(cx + xoff, cy + yoff, H, transformer)
+                    if lonlat:
+                        geo_points.append(lonlat)
 
-            if len(geo_points) < 2:
+            # Clasificación geométrica
+            if H is None or len(geo_points) < 2:
+                # sin homografía: representamos como punto para la UI, pero NO guardamos (geometry=None)
                 geom_type = 'point'
-                geometry = Point(geo_points[0]) if geo_points else None
+                geometry = None if H is None else (Point(geo_points[0]) if geo_points else None)
             else:
-                # Medidas de linealidad
                 length, width, line_aspect = contour_line_metrics(approx)
                 if (area >= params["MIN_AREA_LINE"] and
                     line_aspect >= params["MIN_LINE_ASPECT"] and
@@ -243,20 +245,19 @@ def process_frame_with_offset(frame_cropped, transformer, H, xoff, yoff, show_mo
                     geom_type = 'point'
                     geometry = Point(geo_points[0])
 
-            if geometry is None:
-                continue
-
+            # Dibujo en pantalla
             if show_mode >= 1:
                 if geom_type == 'line':
                     color = (0, 255, 255) if color_name == 'yellow' else (0, 255, 0)
                     box_points = cv2.boxPoints(rect).astype(int)
-                    cv2.drawContours(frame_cropped, [box_points], 0, color, 2)
+                    cv2.drawContours(frame_in, [box_points], 0, color, 2)
                 elif geom_type == 'polygon':
                     color = (0, 165, 255) if color_name == 'yellow' else (0, 100, 0)
-                    cv2.drawContours(frame_cropped, [approx], -1, color, 2)
+                    cv2.drawContours(frame_in, [approx], -1, color, 2)
                 else:
-                    cv2.circle(frame_cropped, (int(x), int(y)), 5, (0, 0, 255), -1)
+                    cv2.circle(frame_in, (int(x), int(y)), 5, (0, 0, 255), -1)
 
+            # Stats
             if color_name == 'yellow':
                 if geom_type == 'point': yellow_points += 1
                 elif geom_type == 'line': yellow_lines += 1
@@ -267,13 +268,13 @@ def process_frame_with_offset(frame_cropped, transformer, H, xoff, yoff, show_mo
                 else:                      green_polygons += 1
 
             detections.append({
-                "geometry": geometry,
+                "geometry": geometry,  # None si no hay H
                 "color": color_name,
                 "type": geom_type
             })
 
     if show_mode >= 1:
-        display_frame = frame_cropped.copy()
+        display_frame = frame_in.copy()
         y_pos = 22
         cv2.putText(display_frame, "AMARILLO", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 215, 255), 1)
         cv2.putText(display_frame, f"P:{yellow_points} L:{yellow_lines} POL:{yellow_polygons}", (110, y_pos),
@@ -286,42 +287,34 @@ def process_frame_with_offset(frame_cropped, transformer, H, xoff, yoff, show_mo
 
     return detections
 
-
 def run_pipeline(video_source, src_type, geo_bounds_utm, epsg_src,
                  show_mode, scale, video_speed, recalib_every,
                  live_params: LiveParams,
                  pause_event: threading.Event,
                  recalib_event: threading.Event,
                  stop_event: threading.Event):
-    """
-    pause_event: si está SET -> PAUSADO (no procesa/guarda)
-    recalib_event: si está SET -> recalibrar en el próximo frame
-    stop_event: para terminar el hilo con seguridad
-    """
+
     os.makedirs('geojson', exist_ok=True)
     transformer = init_transformer(epsg_src)
 
     # Abrir captura
-    if src_type == 'file':
-        cap = cv2.VideoCapture(video_source)
-    else:  # 'url'
-        cap = cv2.VideoCapture(video_source)
-
+    cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
         messagebox.showerror("Error", f"No se pudo abrir la fuente de video: {video_source}")
         return
 
-    # Calibración inicial
+    # Calibración inicial (no detiene el programa si no encuentra cruces)
     H = None
     crop_box = None
-    for _ in range(120):
-        if stop_event.is_set(): break
+    tried_initial = 0
+    while tried_initial < 120 and not stop_event.is_set():
         ret, frame0 = cap.read()
         if not ret:
             break
-        corners_img, crop_box, dbg = find_green_cross_corners(frame0)
+        corners_img, crop_box0, dbg = find_green_cross_corners(frame0)
         if corners_img is not None:
             H = compute_homography_from_corners(corners_img, geo_bounds_utm)
+            crop_box = crop_box0
             if show_mode == 2:
                 dbg_frame = frame0.copy()
                 for (x, y) in corners_img.astype(int):
@@ -332,14 +325,13 @@ def run_pipeline(video_source, src_type, geo_bounds_utm, epsg_src,
                     draw_small("Mascara Verde (cruces)", cv2.cvtColor(dbg["mask_green"], cv2.COLOR_GRAY2BGR), scale)
                 cv2.waitKey(150)
             break
+        tried_initial += 1
 
+    # Si no hay H/crop => seguimos en modo SIN CALIBRACIÓN (sin recorte, sin guardar)
     if H is None or crop_box is None:
-        cap.release()
-        cv2.destroyAllWindows()
-        messagebox.showwarning("Aviso", "No se detectaron 4 cruces verdes para calibrar.")
-        return
-
-    xmin, ymin, xmax, ymax = crop_box
+        messagebox.showinfo("Modo sin calibración",
+                            "No se detectaron 4 cruces verdes.\n"
+                            "Se procesará el frame completo sin georreferenciar hasta que aparezcan.")
 
     # Loop principal con recalibración
     frame_count = 0
@@ -350,7 +342,7 @@ def run_pipeline(video_source, src_type, geo_bounds_utm, epsg_src,
                 break
             frame_count += 1
 
-            # Recalibración automática o forzada
+            # Recalibración automática o forzada (SIEMPRE intentamos sobre el frame actual completo)
             need_recalib = False
             if recalib_every > 0 and (frame_count % recalib_every == 0):
                 need_recalib = True
@@ -364,28 +356,45 @@ def run_pipeline(video_source, src_type, geo_bounds_utm, epsg_src,
                     H2 = compute_homography_from_corners(corners_img2, geo_bounds_utm)
                     if H2 is not None:
                         H = H2
-                        xmin, ymin, xmax, ymax = crop_box2
+                        crop_box = crop_box2
+                # Si no se encuentran cruces, mantenemos el estado actual (puede seguir en modo sin calibrar)
 
-            # Recorte y display
-            frame_cropped = frame[ymin:ymax, xmin:xmax].copy()
+            # Elegir frame de entrada según modo
+            if H is not None and crop_box is not None:
+                xmin, ymin, xmax, ymax = crop_box
+                frame_in = frame[ymin:ymax, xmin:xmax].copy()
+                xoff, yoff = xmin, ymin
+                calibrated = True
+            else:
+                frame_in = frame.copy()
+                xoff, yoff = 0, 0
+                calibrated = False
 
+            # Pausa: solo mostrar, sin procesar ni guardar
             if pause_event.is_set():
-                # Mostrar overlay "PAUSADO"
                 if show_mode >= 1:
-                    overlay = frame_cropped.copy()
+                    overlay = frame_in.copy()
                     cv2.putText(overlay, "PAUSADO", (20, 40),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 255), 3, cv2.LINE_AA)
                     draw_small("SISTEMA DE DETECCION (recorte)", overlay, scale)
-                # seguir mostrando sin procesar ni guardar
                 if cv2.waitKey(video_speed) & 0xFF == ord('q'):
                     break
                 continue
 
-            # Procesamiento normal
+            # Procesamiento
             params_now = live_params.get()
-            detections = process_frame_with_offset(frame_cropped, transformer, H, xmin, ymin, show_mode, scale, params_now)
+            detections = process_frame_generic(frame_in, transformer, H if calibrated else None,
+                                               xoff, yoff, show_mode, scale, params_now)
 
-            if detections:
+            # Overlay de estado de calibración
+            if show_mode >= 1 and not calibrated:
+                overlay = frame_in.copy()
+                cv2.putText(overlay, "SIN CALIBRACION (detectando sin georreferencia)", (20, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 140, 255), 2, cv2.LINE_AA)
+                draw_small("SISTEMA DE DETECCION (recorte)", overlay, scale)
+
+            # Guardado solo si H activo (georreferenciado)
+            if calibrated and detections:
                 guardar_geojson(detections, 'Point',      'geojson/detecciones_puntos.geojson')
                 guardar_geojson(detections, 'LineString', 'geojson/detecciones_lineas.geojson')
                 guardar_geojson(detections, 'Polygon',    'geojson/detecciones_poligonos.geojson')
@@ -396,7 +405,6 @@ def run_pipeline(video_source, src_type, geo_bounds_utm, epsg_src,
     finally:
         cap.release()
         cv2.destroyAllWindows()
-
 
 # ================== Interfaz Tkinter ==================
 
@@ -614,6 +622,8 @@ class App(tk.Tk):
         self.worker_thread.start()
         messagebox.showinfo("Ejecutando",
                             "Detección iniciada.\n"
+                            "Si no hay cruces: se detecta sin georreferencia (frame completo).\n"
+                            "Cuando aparezcan cruces: se activará el recorte y guardado GeoJSON.\n"
                             "Usa Pausar/Reanudar para controlar la captura.\n"
                             "‘Recalibrar ahora’ fuerza actualización de cruces y homografía.")
 
@@ -635,7 +645,6 @@ class App(tk.Tk):
         except Exception:
             pass
         self.destroy()
-
 
 if __name__ == "__main__":
     app = App()
