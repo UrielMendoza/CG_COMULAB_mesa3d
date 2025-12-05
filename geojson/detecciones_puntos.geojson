@@ -3,6 +3,6 @@
 "name": "detecciones_puntos",
 "crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
 "features": [
-{ "type": "Feature", "properties": { "color": "green", "type": "point" }, "geometry": { "type": "Point", "coordinates": [ -99.872652581155592, 20.383887208524722 ] } }
+{ "type": "Feature", "properties": { "color": "yellow", "type": "point" }, "geometry": { "type": "Point", "coordinates": [ -99.299725875937554, 16.709884536434085 ] } }
 ]
 }
