@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui" />
   <title>COMULAB Mesa 3D</title>
   <link rel="icon" href="data:," />
-  <meta name="description" content="Mapa interactivo de El Carmen de Atrato" />
-  <meta name="keywords" content="El Carmen de Atrato"/>
+  <meta name="description" content="Mapa interactivo de detecciones Mesa 3D" />
+  <meta name="keywords" content="Mesa 3D, COMULAB"/>
   <meta name="author" content="Luis Alejandro Rivera" />
   <meta name="robots" content="index,follow" />
   <meta http-equiv="cache-control" content="no-cache"/>
 
-  <!-- Plugins y estilos (rutas exactas solicitadas) -->
+  <!-- Plugins y estilos -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <script src="https://unpkg.com/leaflet@1.9.1/dist/leaflet.js"></script>
   <link  rel="stylesheet" href="https://unpkg.com/leaflet@1.9.1/dist/leaflet.css" />
@@ -21,6 +21,9 @@
   <script src="./plugins/terraformer/terraformer-wkt-parser.js"></script>
   <link  rel="stylesheet" href="./css/main.css" />
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+  <!-- Proj4js para conversión de coordenadas UTM -> WGS84 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.min.js"></script>
 
   <!-- togeojson (requerido por leaflet-filelayer) -->
   <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@7.1.2/dist/togeojson.umd.js"></script>
@@ -41,6 +44,76 @@
     .status-badge.ok   { background: rgba(0,150,60,0.8); }
     .status-badge.err  { background: rgba(180,0,0,0.8); }
     .status-badge.load { background: rgba(0,0,0,0.65); }
+    .status-badge.waiting { background: rgba(100,100,100,0.8); }
+
+    /* Botón de actualización llamativo */
+    .update-btn-container {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+    }
+    .update-btn {
+      background: linear-gradient(135deg, #ff6b35, #f7931e);
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 50px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(255, 107, 53, 0.4);
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      animation: pulse-glow 2s infinite;
+    }
+    .update-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 6px 20px rgba(255, 107, 53, 0.6);
+    }
+    .update-btn:active {
+      transform: scale(0.98);
+    }
+    .update-btn.loading {
+      background: linear-gradient(135deg, #888, #666);
+      animation: none;
+      cursor: wait;
+    }
+    .update-btn i {
+      font-size: 18px;
+    }
+    .update-btn.loading i {
+      animation: spin 1s linear infinite;
+    }
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 4px 15px rgba(255, 107, 53, 0.4); }
+      50% { box-shadow: 0 4px 25px rgba(255, 107, 53, 0.7); }
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    /* Contador de detecciones */
+    .detection-counter {
+      position: absolute;
+      top: 10px;
+      left: 60px;
+      z-index: 1000;
+      background: rgba(0,0,0,0.75);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: sans-serif;
+    }
+    .detection-counter .count {
+      font-weight: bold;
+      color: #4CAF50;
+    }
 
     .wkt-container {
       max-height: 100px; overflow-y: auto; background:#f5f5f5;
@@ -64,15 +137,311 @@
     #nombreModal .close{ position:absolute; top:12px; right:12px; background:transparent;
       border:none; font-size:20px; font-weight:bold; color:#999; cursor:pointer; }
     .custom-marker{ display:flex; align-items:center; justify-content:center; }
+
+    /* Estilo para cruces de calibración */
+    .calibration-cross {
+      font-size: 24px;
+      color: #0066ff;
+      text-shadow: 0 0 3px white, 0 0 6px white;
+      font-weight: bold;
+    }
+
+    /* Leyenda del área de mapeo */
+    .map-area-legend {
+      position: absolute;
+      bottom: 30px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-family: monospace;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      max-width: 220px;
+    }
+    .map-area-legend h4 {
+      margin: 0 0 8px 0;
+      font-size: 12px;
+      color: #333;
+      font-family: sans-serif;
+    }
+    .map-area-legend .coords {
+      color: #666;
+      line-height: 1.5;
+    }
+    .map-area-legend .epsg {
+      color: #0066ff;
+      font-weight: bold;
+    }
+
+    /* Panel de imagen georreferenciada - Colapsable a icono */
+    .image-overlay-panel {
+      position: absolute;
+      top: 80px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      font-family: sans-serif;
+      font-size: 13px;
+      overflow: hidden;
+      transition: all 0.3s ease;
+      width: 220px;
+    }
+    /* Estado colapsado - solo icono circular */
+    .image-overlay-panel.collapsed {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      box-shadow: 0 3px 12px rgba(102, 126, 234, 0.4);
+      cursor: pointer;
+    }
+    .image-overlay-panel.collapsed:hover {
+      transform: scale(1.1);
+      box-shadow: 0 4px 16px rgba(102, 126, 234, 0.6);
+    }
+    /* Header normal */
+    .image-overlay-panel .panel-header {
+      padding: 10px 12px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
+      transition: all 0.3s ease;
+    }
+    .image-overlay-panel .panel-header:hover {
+      background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+    }
+    /* Header colapsado - solo icono centrado */
+    .image-overlay-panel.collapsed .panel-header {
+      padding: 0;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+    }
+    .image-overlay-panel .panel-header h4 {
+      margin: 0;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.3s ease;
+      white-space: nowrap;
+    }
+    .image-overlay-panel.collapsed .panel-header h4 {
+      font-size: 18px;
+      gap: 0;
+    }
+    .image-overlay-panel.collapsed .panel-header h4 .header-text {
+      display: none;
+    }
+    .image-overlay-panel .panel-header .toggle-icon {
+      transition: transform 0.3s ease;
+      font-size: 12px;
+    }
+    .image-overlay-panel.collapsed .panel-header .toggle-icon {
+      display: none;
+    }
+    /* Contenido del panel */
+    .image-overlay-panel .panel-content {
+      padding: 12px;
+      max-height: 400px;
+      transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s ease;
+      opacity: 1;
+    }
+    .image-overlay-panel.collapsed .panel-content {
+      max-height: 0;
+      padding: 0;
+      opacity: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    /* Indicador de imagen cargada - punto verde */
+    .image-overlay-panel.collapsed.has-image::after {
+      content: '';
+      position: absolute;
+      top: -2px;
+      right: -2px;
+      width: 14px;
+      height: 14px;
+      background: #28a745;
+      border-radius: 50%;
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    /* Resto de estilos del panel */
+    .image-overlay-panel .upload-area {
+      border: 2px dashed #ccc;
+      border-radius: 6px;
+      padding: 15px 10px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 10px;
+    }
+    .image-overlay-panel .upload-area:hover {
+      border-color: #667eea;
+      background: #f0f4ff;
+    }
+    .image-overlay-panel .upload-area.has-image {
+      border-color: #28a745;
+      background: #e8f5e9;
+    }
+    .image-overlay-panel .upload-area i {
+      font-size: 24px;
+      color: #888;
+      margin-bottom: 6px;
+    }
+    .image-overlay-panel .upload-area.has-image i {
+      color: #28a745;
+    }
+    .image-overlay-panel .upload-area span {
+      display: block;
+      font-size: 11px;
+      color: #666;
+    }
+    .image-overlay-panel input[type="file"] {
+      display: none;
+    }
+    .image-overlay-panel .opacity-control {
+      display: none;
+      margin-top: 10px;
+    }
+    .image-overlay-panel .opacity-control.visible {
+      display: block;
+    }
+    .image-overlay-panel .opacity-control label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #555;
+      margin-bottom: 4px;
+    }
+    .image-overlay-panel .opacity-control input[type="range"] {
+      width: 100%;
+      cursor: pointer;
+    }
+    .image-overlay-panel .image-actions {
+      display: none;
+      margin-top: 10px;
+      gap: 6px;
+    }
+    .image-overlay-panel .image-actions.visible {
+      display: flex;
+    }
+    .image-overlay-panel .btn-small {
+      flex: 1;
+      padding: 6px 8px;
+      font-size: 11px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .image-overlay-panel .btn-remove {
+      background: #dc3545;
+      color: white;
+    }
+    .image-overlay-panel .btn-remove:hover {
+      background: #c82333;
+    }
+    .image-overlay-panel .btn-fit {
+      background: #17a2b8;
+      color: white;
+    }
+    .image-overlay-panel .btn-fit:hover {
+      background: #138496;
+    }
+    .image-overlay-panel .image-info {
+      display: none;
+      font-size: 10px;
+      color: #666;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #eee;
+    }
+    .image-overlay-panel .image-info.visible {
+      display: block;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="status" class="status-badge load">Cargando…</div>
+  <div id="status" class="status-badge waiting">Esperando actualización...</div>
+  
+  <!-- Contador de detecciones -->
+  <div class="detection-counter">
+    Detecciones: <span class="count" id="detectionCount">0</span>
+  </div>
+
+  <!-- Botón de actualización llamativo -->
+  <div class="update-btn-container">
+    <button id="updateBtn" class="update-btn" onclick="manualUpdate()">
+      <i class="fas fa-sync-alt"></i>
+      <span>Actualizar Detecciones</span>
+    </button>
+  </div>
+
+  <!-- Leyenda del área de mapeo -->
+  <div class="map-area-legend" id="areaLegend">
+    <h4>📍 Área de Mapeo</h4>
+    <div class="coords">
+      <span class="epsg">EPSG:6369</span><br>
+      X: 436,770 - 506,937<br>
+      Y: 1,832,196 - 1,892,878
+    </div>
+  </div>
+
+  <!-- Panel de imagen georreferenciada - Colapsable a icono -->
+  <div class="image-overlay-panel collapsed" id="imagePanel" title="Imagen de Fondo">
+    <div class="panel-header" onclick="toggleImagePanel()">
+      <h4><i class="fas fa-image"></i><span class="header-text"> Imagen de Fondo</span></h4>
+      <span class="toggle-icon"><i class="fas fa-chevron-down"></i></span>
+    </div>
+    
+    <div class="panel-content">
+      <div class="upload-area" id="uploadArea" onclick="document.getElementById('imageInput').click()">
+        <i class="fas fa-cloud-upload-alt"></i>
+        <span id="uploadText">Clic para cargar imagen<br>(PNG, JPG, TIFF)</span>
+      </div>
+      <input type="file" id="imageInput" accept="image/*" onchange="loadGeoImage(this)">
+      
+      <div class="opacity-control" id="opacityControl">
+        <label>
+          <span>Opacidad:</span>
+          <span id="opacityValue">100%</span>
+        </label>
+        <input type="range" id="opacitySlider" min="0" max="100" value="100" oninput="updateImageOpacity(this.value)">
+      </div>
+      
+      <div class="image-actions" id="imageActions">
+        <button class="btn-small btn-fit" onclick="event.stopPropagation(); fitToImage()">
+          <i class="fas fa-expand"></i> Ajustar vista
+        </button>
+        <button class="btn-small btn-remove" onclick="event.stopPropagation(); removeGeoImage()">
+          <i class="fas fa-trash"></i> Quitar
+        </button>
+      </div>
+      
+      <div class="image-info" id="imageInfo">
+        <strong>Archivo:</strong> <span id="imageName">-</span><br>
+        <strong>Georreferenciada a:</strong> Área de estudio
+      </div>
+    </div>
+  </div>
 
   <script>
   /* ===========================================
-     0) Traducción Leaflet.Draw (equivalente a traducc.js)
+     0) Traducción Leaflet.Draw
      =========================================== */
   L.drawLocal = {
     draw: {
@@ -97,7 +466,7 @@
         polyline:{ error:'<strong>Error:</strong> Una línea no puede cruzar sobre sí misma',
                    tooltip:{ start:'Haz clic para comenzar a dibujar la línea.', cont:'Haz clic para continuar dibujando la línea.', end:'Haz clic en el último punto para terminar la línea.' } },
         rectangle:{ tooltip:{ start:'Haz clic y arrastra para dibujar un rectángulo.' } },
-        simpleshape:{ tooltip:{ end:'Suelta el mpuse para terminar de dibujar.' } }
+        simpleshape:{ tooltip:{ end:'Suelta el mouse para terminar de dibujar.' } }
       }
     },
     edit: {
@@ -120,15 +489,48 @@
   };
 
   /* ===========================================
-     1) Mapa base + grupos y control de dibujo
+     1) Configuración de proyección UTM
      =========================================== */
-  const map = L.map('map', { center:[19.3772,-98.5675], zoom:12, maxZoom:22 });
+  // Definir EPSG:6369 (Mexico ITRF2008 / UTM zone 14N)
+  proj4.defs("EPSG:6369", "+proj=utm +zone=14 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
 
-  /* === Mapas base (incluyendo OSM) === */
+  // Coordenadas del área de mapeo (Guerrero Costa Chica)
+  const AREA_UTM = {
+    xmin: 436770.3242,
+    ymin: 1832196.0532,
+    xmax: 506936.9275,
+    ymax: 1892877.8394,
+    epsg: 'EPSG:6369'
+  };
+
+  // Función para convertir UTM a WGS84
+  function utmToLatLng(x, y) {
+    const [lng, lat] = proj4('EPSG:6369', 'EPSG:4326', [x, y]);
+    return [lat, lng];
+  }
+
+  // Calcular esquinas del área en WGS84
+  const areaBounds = [
+    utmToLatLng(AREA_UTM.xmin, AREA_UTM.ymin), // SW
+    utmToLatLng(AREA_UTM.xmin, AREA_UTM.ymax), // NW
+    utmToLatLng(AREA_UTM.xmax, AREA_UTM.ymax), // NE
+    utmToLatLng(AREA_UTM.xmax, AREA_UTM.ymin), // SE
+  ];
+
+  /* ===========================================
+     2) Mapa base + grupos y control de dibujo
+     =========================================== */
+  // Centro aproximado del área
+  const centerUTM = [(AREA_UTM.xmin + AREA_UTM.xmax) / 2, (AREA_UTM.ymin + AREA_UTM.ymax) / 2];
+  const centerLatLng = utmToLatLng(centerUTM[0], centerUTM[1]);
+
+  const map = L.map('map', { center: centerLatLng, zoom: 10, maxZoom: 22 });
+
+  /* === Mapas base === */
   const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map); // OSM activo por defecto
+  }).addTo(map);
 
   const osmHOT = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
     maxZoom: 20,
@@ -137,7 +539,7 @@
 
   const openTopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
     maxZoom: 17,
-    attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)'
+    attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap'
   });
 
   const cartoPositron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
@@ -153,7 +555,7 @@
 
   const googleSat = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
     attribution:'&copy; Google Maps', maxZoom:22
-  }); // definido, pero no activo
+  });
 
   const baseMaps = {
     'OpenStreetMap': osm,
@@ -164,26 +566,81 @@
     'Google Satellite': googleSat
   };
 
-  // Overlays existentes
-  const drawnItems    = L.featureGroup().addTo(map);  // figuras dibujadas
-  const detectedGroup = L.featureGroup().addTo(map);  // detecciones dinámicas
+  // Grupos de capas separados
+  const drawnItems     = L.featureGroup().addTo(map);  // figuras dibujadas por usuario
+  const detectedGroup  = L.featureGroup().addTo(map);  // detecciones del GeoJSON
+  const userLoadedGroup = L.featureGroup().addTo(map); // capas cargadas por usuario (FileLayer)
+  const calibrationGroup = L.featureGroup().addTo(map); // cruces de calibración
+  const mapAreaGroup   = L.featureGroup().addTo(map);  // rectángulo del área de mapeo
+  const imageOverlayGroup = L.featureGroup().addTo(map); // imagen georreferenciada
 
-  // Control de capas
-  L.control.layers(baseMaps, {
-    'Figuras dibujadas': drawnItems,
-    'Detecciones': detectedGroup
+  // Grupo maestro para edición (contiene referencias a todas las capas editables)
+  const allEditableLayers = L.featureGroup().addTo(map);
+
+  // Variable para la imagen overlay
+  let currentImageOverlay = null;
+
+  // Bounds de la imagen (igual al área de estudio)
+  const imageBounds = L.latLngBounds(
+    [areaBounds[0][0], areaBounds[0][1]], // SW
+    [areaBounds[2][0], areaBounds[2][1]]  // NE
+  );
+
+  // Dibujar el rectángulo del área de mapeo
+  const areaPolygon = L.polygon(areaBounds, {
+    color: '#0066ff',
+    weight: 3,
+    fillColor: '#0066ff',
+    fillOpacity: 0.05,
+    dashArray: '10, 5',
+    interactive: false
+  }).addTo(mapAreaGroup);
+
+  // Agregar etiqueta al área
+  areaPolygon.bindTooltip('Área de Mapeo<br>Guerrero Costa Chica', {
+    permanent: false,
+    direction: 'center',
+    className: 'area-tooltip'
+  });
+
+  // Agregar marcadores en las esquinas del área (simulando las cruces de calibración)
+  const crossIcon = L.divIcon({
+    className: 'calibration-cross',
+    html: '✚',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12]
+  });
+
+  areaBounds.forEach((coord, i) => {
+    const labels = ['SW', 'NW', 'NE', 'SE'];
+    const marker = L.marker(coord, { icon: crossIcon })
+      .bindTooltip(`Cruz ${labels[i]}`, { permanent: false, direction: 'top' })
+      .addTo(calibrationGroup);
+  });
+
+  // Control de capas con grupos separados
+  const layerControl = L.control.layers(baseMaps, {
+    '🖼️ Imagen Georreferenciada': imageOverlayGroup,
+    '🟡 Detecciones': detectedGroup,
+    '📁 Capas Cargadas': userLoadedGroup,
+    '✏️ Figuras Dibujadas': drawnItems,
+    '📍 Área de Mapeo': mapAreaGroup,
+    '✚ Cruces Calibración': calibrationGroup
   }, { collapsed: true }).addTo(map);
 
-  map.addControl(new L.Control.Draw({
-    edit: { featureGroup: drawnItems, poly:{ allowIntersection:false } },
+  // Control de dibujo - edita el grupo maestro que contiene todo
+  const drawControl = new L.Control.Draw({
+    edit: { featureGroup: allEditableLayers, poly:{ allowIntersection:false } },
     draw: { polygon:{ allowIntersection:false, showArea:true } }
-  }));
+  });
+  map.addControl(drawControl);
 
   /* ===========================================
-     2) Utilidades generales
+     3) Utilidades generales
      =========================================== */
   const statusEl = document.getElementById('status');
-  const UPDATE_MS = 15000; // <-- intervalo más lento (15 s). Ajusta si quieres.
+  const updateBtn = document.getElementById('updateBtn');
+  const detectionCountEl = document.getElementById('detectionCount');
 
   function _round(num,len){ return Math.round(num*Math.pow(10,len))/Math.pow(10,len); }
   function getLayerTypeName(layer){
@@ -213,7 +670,7 @@
   }
 
   /* ===========================================
-     3) Registro global id -> layer (para todo)
+     4) Registro global id -> layer
      =========================================== */
   const layerRegistry = new Map();
   function registerLayer(layer){ layerRegistry.set(L.stamp(layer), layer); }
@@ -221,7 +678,7 @@
   function getAnyLayerById(id){ return layerRegistry.get(id) || null; }
 
   /* ===========================================
-     4) Modal edición de props y estilos
+     5) Modal edición de props y estilos
      =========================================== */
   function handleEscapeKey(e){ if(e.key==='Escape') closeNombreModal(); }
   function closeNombreModal(){
@@ -303,13 +760,6 @@
     document.addEventListener('keydown', handleEscapeKey);
   }
 
-  function isDetectionLayer(layer){
-    for(const [,v] of currentDetectionLayers.entries()){
-      if(v===layer) return true;
-    }
-    return false;
-  }
-
   function saveNombre(layerId){
     const layer=getAnyLayerById(layerId);
     if(!layer) return;
@@ -345,23 +795,23 @@
     }
 
     bindPopupForLayer(layer);
-
-    // Persistir si es detección
-    if(isDetectionLayer(layer)) persistAnnotationForLayer(layer);
-
+    persistAnnotationForLayer(layer);
     closeNombreModal();
   }
 
   /* ===========================================
-     5) Dibujo del usuario
+     6) Dibujo del usuario
      =========================================== */
   map.on(L.Draw.Event.CREATED, function(ev){
     const layer=ev.layer;
     if(layer.setStyle) layer.setStyle({ color:'#3388ff', weight:2, fillColor:'#3388ff', fillOpacity:0.5 });
     layer.feature=layer.toGeoJSON();
+    layer._isUserDrawn = true;  // MARCAR como dibujada por usuario
     bindPopupForLayer(layer);
-    drawnItems.addLayer(layer);
+    drawnItems.addLayer(layer);        // Grupo visual
+    allEditableLayers.addLayer(layer); // Grupo editable
     registerLayer(layer);
+    updateDetectionCount();
   });
 
   map.on(L.Draw.Event.EDITED, function(ev){
@@ -377,11 +827,44 @@
         layer.feature=gj;
       }
       bindPopupForLayer(layer);
+      persistAnnotationForLayer(layer);
     });
+    updateDetectionCount();
+  });
+
+  map.on(L.Draw.Event.DELETED, function(ev){
+    ev.layers.eachLayer(function(layer){
+      unregisterLayer(layer);
+      
+      // Remover del grupo visual correspondiente
+      if(layer._isUserDrawn && drawnItems.hasLayer(layer)) {
+        drawnItems.removeLayer(layer);
+      }
+      if(layer._isUserLoaded && userLoadedGroup.hasLayer(layer)) {
+        userLoadedGroup.removeLayer(layer);
+      }
+      if(layer._isDetection && detectedGroup.hasLayer(layer)) {
+        detectedGroup.removeLayer(layer);
+        // También eliminar del registro de detecciones
+        for(const [key, lyr] of currentDetectionLayers.entries()) {
+          if(lyr === layer) {
+            currentDetectionLayers.delete(key);
+            break;
+          }
+        }
+      }
+      
+      // Eliminar de las anotaciones persistentes
+      const f = layer.feature || layer.toGeoJSON();
+      const key = featureKey(f);
+      delete annotationsStore[key];
+      try{ localStorage.setItem('detections_annotations', JSON.stringify(annotationsStore)); }catch(_){}
+    });
+    updateDetectionCount();
   });
 
   /* ===========================================
-     6) Popups (con Editar/Descargas/Compartir)
+     7) Popups
      =========================================== */
   function bindPopupForLayer(layer){
     const gj = layer.feature || layer.toGeoJSON();
@@ -394,13 +877,15 @@
     const name=getLayerTypeName(layer);
     const nombre=gj.properties?.nombre ?? null;
     const descripcion=gj.properties?.descripcion ?? "";
+    const colorProp = gj.properties?.color || '';
 
     let content="";
-    content += `<strong>Nombre:</strong> <span>${nombre??''}</span><br>`;
-    content += `<strong>Descripción:</strong> <span>${descripcion}</span><br>`;
+    content += `<strong>Tipo:</strong> ${name}<br>`;
+    if(colorProp) content += `<strong>Color detectado:</strong> <span style="color:${colorProp==='yellow'?'#cc9900':'green'}">${colorProp}</span><br>`;
+    content += `<strong>Nombre:</strong> <span>${nombre??'Sin nombre'}</span><br>`;
+    content += `<strong>Descripción:</strong> <span>${descripcion || 'Sin descripción'}</span><br>`;
 
-    // Botón editar
-    content += `<button class="btn btn-grey" onclick="openNombreModal(${L.stamp(layer)})"><i class="fa fa-edit" style="margin-right:6px;"></i>Editar</button><br><hr/>`;
+    content += `<button class="btn btn-grey" onclick="openNombreModal(${L.stamp(layer)})" style="margin-top:8px;"><i class="fa fa-edit" style="margin-right:6px;"></i>Editar</button><br><hr/>`;
 
     if(wkt){
       content += `<strong>Figura en WKT:</strong><br><div class="wkt-container" id="wkt-container">${wkt}</div><br>`;
@@ -426,7 +911,7 @@
           </div>
         </div>`;
     } else {
-      content += `<em style="color:#888">WKT no disponible (Terraformer no cargó).</em>`;
+      content += `<em style="color:#888">WKT no disponible.</em>`;
     }
 
     layer.bindPopup(content);
@@ -438,7 +923,7 @@
     navigator.clipboard.writeText(txt).catch(()=>{});
   }
 
-  // Descargas (GeoJSON / KML / CSV) – simples
+  // Descargas
   function downloadGeoJSON(geojson, name){
     const nombreArchivo = name || "Figura";
     const s = JSON.stringify(geojson, null, 2);
@@ -446,7 +931,6 @@
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nombreArchivo+'.geojson'; a.click();
   }
 
-  // (Se usa la función hexToKMLColor definida en utilidades)
   function downloadKML(wkt, name){
     let geojson;
     try{ geojson = Terraformer.WKT.parse(wkt); } catch(e){ console.error("WKT inválido", e); return; }
@@ -503,28 +987,70 @@
   }
 
   /* ===========================================
-     6.5) Carga de archivos (FileLayer) — FIX
+     8) Carga de archivos (FileLayer) - editables
      =========================================== */
   const fileLoader = L.Control.fileLayerLoad({
-    layer: L.geoJson,
-    layerOptions: { style: { color:'red' } },
-    addToMap: true,        // añade al mapa tras cargar
-    fileSizeLimit: 1024,   // 1 MB (ajusta si quieres)
-    formats: ['.geojson', '.kml']
+    layer: function(geojson, options) {
+      // Crear la capa GeoJSON con nuestras opciones personalizadas
+      return L.geoJson(geojson, {
+        style: function(feature) {
+          return { color:'#ff6600', weight:2, fillColor:'#ff6600', fillOpacity:0.4 };
+        },
+        pointToLayer: function(feature, latlng) {
+          return L.circleMarker(latlng, { 
+            radius: 8, 
+            color: '#000', 
+            weight: 2, 
+            fillColor: '#ff6600', 
+            fillOpacity: 0.8 
+          });
+        },
+        onEachFeature: function(feature, layer) {
+          layer.feature = feature;
+          layer._isUserLoaded = true;  // MARCAR como cargada por usuario
+          bindPopupForLayer(layer);
+          registerLayer(layer);
+          // Agregar al grupo visual de capas cargadas
+          userLoadedGroup.addLayer(layer);
+          // Agregar al grupo editable para que se pueda editar con Draw
+          allEditableLayers.addLayer(layer);
+        }
+      });
+    },
+    addToMap: true,
+    fileSizeLimit: 10240,  // 10 MB
+    formats: ['.geojson', '.json', '.kml', '.gpx']
   }).addTo(map);
 
-  // Eventos del loader (misma instancia)
   fileLoader.loader.on('data:loaded', function (event) {
-    console.log('Archivo cargado:', event.filename, event.layer);
-    // Si tienes un control de capas propio, agrégalo aquí.
+    console.log('Archivo cargado exitosamente:', event.filename);
+    statusEl.className='status-badge ok';
+    statusEl.textContent=`✓ Archivo "${event.filename}" cargado`;
+    updateDetectionCount();
+    
+    // Ajustar vista al contenido cargado
+    if(userLoadedGroup.getLayers().length > 0) {
+      try {
+        map.fitBounds(userLoadedGroup.getBounds().pad(0.1), { animate: true });
+      } catch(e) {}
+    }
   });
 
   fileLoader.loader.on('data:error', function (error) {
     console.error('Error al cargar archivo:', error);
+    statusEl.className='status-badge err';
+    
+    let errorMsg = 'Error al cargar archivo';
+    if(error.error && error.error.message) {
+      errorMsg += ': ' + error.error.message;
+    }
+    statusEl.textContent = errorMsg;
+    
+    alert('Error al cargar el archivo.\n\nVerifica que:\n• El archivo sea GeoJSON, KML o GPX válido\n• El archivo no esté vacío\n• El tamaño sea menor a 10MB');
   });
 
   /* ===========================================
-     7) Detecciones dinámicas con etiquetas persistentes
+     9) Detecciones - Carga MANUAL
      =========================================== */
   function loadAnnotationsStore(){
     try{ const s=localStorage.getItem('detections_annotations'); return s? JSON.parse(s):{}; }catch(e){ return {}; }
@@ -589,22 +1115,34 @@
   }
 
   function styleByProps(f){
-    const col=f.properties?.color || '#3388ff';
-    return { color:col, weight:3, fillColor:col, fillOpacity:0.35 };
+    const col = f.properties?.color || '#3388ff';
+    const colorMap = {
+      'yellow': '#FFD700',
+      'green': '#228B22'
+    };
+    const finalColor = colorMap[col] || col;
+    return { color: finalColor, weight: 3, fillColor: finalColor, fillOpacity: 0.35 };
   }
+
   function pointToLayerFn(f, latlng){
-    const col=f.properties?.color || '#3388ff';
-    return L.circleMarker(latlng, { radius:6, color:'#000', weight:1, fillColor:col, fillOpacity:0.8, opacity:1 });
+    const col = f.properties?.color || '#3388ff';
+    const colorMap = {
+      'yellow': '#FFD700',
+      'green': '#228B22'
+    };
+    const finalColor = colorMap[col] || col;
+    return L.circleMarker(latlng, { radius:8, color:'#000', weight:2, fillColor:finalColor, fillOpacity:0.8, opacity:1 });
   }
+
   function onEachDetectionFeature(f, layer){
     layer.feature=f;
+    layer._isDetection = true;  // MARCAR como detección
     applyAnnotationToLayer(layer, f);
     bindPopupForLayer(layer);
-    // Doble clic abre edición; el clic normal solo muestra popup
     layer.on('dblclick', ()=> openNombreModal(L.stamp(layer)));
   }
 
-  const currentDetectionLayers = new Map(); // key -> sublayer
+  const currentDetectionLayers = new Map();
 
   async function fetchJSON(url){
     try{
@@ -616,35 +1154,30 @@
     }catch(e){ console.warn('No se pudo leer', url, e); return null; }
   }
 
-  // ¿la capa es visible en el mapa actual?
-  function layerIsVisible(layer){
-    if (layer.getLatLng) {
-      return map.getBounds().contains(layer.getLatLng());
+  function updateDetectionCount() {
+    const detections = detectedGroup.getLayers().length;
+    const userLoaded = userLoadedGroup.getLayers().length;
+    const userDrawn = drawnItems.getLayers().length;
+    
+    let text = `${detections}`;
+    const extras = [];
+    if(userLoaded > 0) extras.push(`${userLoaded} cargadas`);
+    if(userDrawn > 0) extras.push(`${userDrawn} dibujadas`);
+    
+    if(extras.length > 0) {
+      text += ` (+${extras.join(', ')})`;
     }
-    if (layer.getBounds) {
-      return map.getBounds().intersects(layer.getBounds());
-    }
-    return true;
+    detectionCountEl.textContent = text;
   }
 
-  // si la nueva capa cae fuera de vista, ampliar a incluir vista actual + capa
-  function maybeRefitOnNewLayer(layer){
-    if (layerIsVisible(layer)) return;
-    let combined = map.getBounds().pad(0.05);
-    if (layer.getBounds) {
-      const b = layer.getBounds();
-      combined = combined.extend(b.getNorthEast()).extend(b.getSouthWest());
-    } else if (layer.getLatLng) {
-      combined = combined.extend(layer.getLatLng());
-    }
-    map.fitBounds(combined.pad(0.12), { animate:true });
-  }
-
-  async function loadDetectionsLoop(){
+  // Función de actualización MANUAL
+  async function loadDetections(){
     statusEl.className='status-badge load';
-    statusEl.textContent='Cargando…';
+    statusEl.textContent='Cargando detecciones...';
+    updateBtn.classList.add('loading');
+    updateBtn.querySelector('span').textContent = 'Cargando...';
 
-    // lee los 3 archivos si existen (rutas pedidas)
+    // Leer los 3 archivos GeoJSON
     const [gjP, gjL, gjG] = await Promise.all([
       fetchJSON('../geojson/detecciones_puntos.geojson'),
       fetchJSON('../geojson/detecciones_lineas.geojson'),
@@ -657,57 +1190,213 @@
     if(gjG && Array.isArray(gjG.features)) feats.push(...gjG.features);
 
     const seen=new Set();
+    let newCount = 0;
 
     for(const f of feats){
       const key=featureKey(f);
       seen.add(key);
+      
       if(currentDetectionLayers.has(key)){
+        // Ya existe, actualizar
         const lyr=currentDetectionLayers.get(key);
         lyr.feature=f;
         applyAnnotationToLayer(lyr, f);
         bindPopupForLayer(lyr);
       } else {
-        const group = L.geoJSON(f, { style:styleByProps, pointToLayer:pointToLayerFn, onEachFeature:onEachDetectionFeature })
-                       .addTo(detectedGroup);
+        // Nueva detección
+        newCount++;
+        const group = L.geoJSON(f, { 
+          style: styleByProps, 
+          pointToLayer: pointToLayerFn, 
+          onEachFeature: onEachDetectionFeature 
+        });
 
-        group.eachLayer(sub=>{
+        group.eachLayer(sub => {
           currentDetectionLayers.set(key, sub);
           registerLayer(sub);
-          // animación de aparición
+          detectedGroup.addLayer(sub);      // Grupo visual de detecciones
+          allEditableLayers.addLayer(sub);  // Grupo editable
+          
+          // Animación de aparición
           if(sub.setStyle){
-            const st=sub.options;
-            sub.setStyle({ ...st, opacity:0, fillOpacity:(st.fillOpacity??0)*0.0 });
-            setTimeout(()=> sub.setStyle({ ...st, opacity:1, fillOpacity:st.fillOpacity??0.35 }), 160);
+            const st = sub.options;
+            sub.setStyle({ ...st, opacity:0, fillOpacity:0 });
+            setTimeout(() => sub.setStyle({ ...st, opacity:1, fillOpacity: st.fillOpacity ?? 0.35 }), 100);
           }
-          // si está fuera de vista, ampliar para incluirla
-          maybeRefitOnNewLayer(sub);
         });
       }
     }
 
-    // bajas
+    // Eliminar SOLO detecciones que ya no existen (nunca tocar capas del usuario)
     for(const [key, lyr] of currentDetectionLayers.entries()){
       if(!seen.has(key)){
-        detectedGroup.removeLayer(lyr);
-        unregisterLayer(lyr);
+        // Verificar que sea una detección antes de eliminar
+        if(lyr._isDetection) {
+          detectedGroup.removeLayer(lyr);
+          allEditableLayers.removeLayer(lyr);
+          unregisterLayer(lyr);
+        }
         currentDetectionLayers.delete(key);
       }
     }
 
-    statusEl.className='status-badge ok';
-    statusEl.textContent=`Actualizado ${new Date().toLocaleTimeString()}`;
-    setTimeout(loadDetectionsLoop, UPDATE_MS);
-  }
-  loadDetectionsLoop();
-
-  // Auto-fit una vez cuando aparezcan detecciones (si quieres mantenerlo)
-  let didFit=false;
-  const fitTimer=setInterval(()=>{
-    if(!didFit && detectedGroup.getLayers().length>0){
-      map.fitBounds(detectedGroup.getBounds().pad(0.15));
-      didFit=true; clearInterval(fitTimer);
+    // Actualizar UI
+    updateDetectionCount();
+    
+    const now = new Date().toLocaleTimeString();
+    if(feats.length > 0) {
+      statusEl.className='status-badge ok';
+      statusEl.textContent=`✓ ${feats.length} detecciones (${newCount} nuevas) - ${now}`;
+      
+      // Ajustar vista solo a las detecciones nuevas
+      if(detectedGroup.getLayers().length > 0) {
+        try {
+          map.fitBounds(detectedGroup.getBounds().pad(0.15), { animate: true, maxZoom: 16 });
+        } catch(e) {
+          console.warn('No se pudo ajustar vista:', e);
+        }
+      }
+    } else {
+      statusEl.className='status-badge ok';
+      statusEl.textContent=`Sin nuevas detecciones - ${now}`;
     }
-  }, 1000);
+
+    updateBtn.classList.remove('loading');
+    updateBtn.querySelector('span').textContent = 'Actualizar Detecciones';
+  }
+
+  // Función llamada por el botón
+  function manualUpdate() {
+    if(updateBtn.classList.contains('loading')) return;
+    loadDetections();
+  }
+
+  /* ===========================================
+     11) Imagen Georreferenciada
+     =========================================== */
+  
+  // Función para toggle del panel
+  function toggleImagePanel() {
+    const panel = document.getElementById('imagePanel');
+    panel.classList.toggle('collapsed');
+  }
+  
+  // Función para cargar imagen
+  function loadGeoImage(input) {
+    const file = input.files[0];
+    if (!file) return;
+    
+    // Verificar que sea imagen
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor selecciona un archivo de imagen válido (PNG, JPG, TIFF, etc.)');
+      return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const imageUrl = e.target.result;
+      
+      // Remover imagen anterior si existe
+      if (currentImageOverlay) {
+        imageOverlayGroup.removeLayer(currentImageOverlay);
+      }
+      
+      // Crear nueva imagen overlay georreferenciada al área de estudio
+      currentImageOverlay = L.imageOverlay(imageUrl, imageBounds, {
+        opacity: 1,
+        interactive: true,
+        zIndex: 100
+      });
+      
+      // Agregar al grupo
+      imageOverlayGroup.addLayer(currentImageOverlay);
+      
+      // Actualizar UI
+      const panel = document.getElementById('imagePanel');
+      const uploadArea = document.getElementById('uploadArea');
+      const uploadText = document.getElementById('uploadText');
+      const opacityControl = document.getElementById('opacityControl');
+      const imageActions = document.getElementById('imageActions');
+      const imageInfo = document.getElementById('imageInfo');
+      const imageName = document.getElementById('imageName');
+      const opacitySlider = document.getElementById('opacitySlider');
+      
+      panel.classList.add('has-image');
+      uploadArea.classList.add('has-image');
+      uploadText.innerHTML = '✓ Imagen cargada<br>(clic para cambiar)';
+      opacityControl.classList.add('visible');
+      imageActions.classList.add('visible');
+      imageInfo.classList.add('visible');
+      imageName.textContent = file.name.length > 25 ? file.name.substring(0, 22) + '...' : file.name;
+      
+      // Resetear opacidad
+      opacitySlider.value = 100;
+      document.getElementById('opacityValue').textContent = '100%';
+      
+      // Ajustar vista a la imagen
+      map.fitBounds(imageBounds, { padding: [20, 20] });
+      
+      console.log('Imagen georreferenciada cargada:', file.name);
+    };
+    
+    reader.onerror = function() {
+      alert('Error al leer el archivo de imagen.');
+    };
+    
+    reader.readAsDataURL(file);
+  }
+  
+  // Función para actualizar opacidad
+  function updateImageOpacity(value) {
+    const opacity = value / 100;
+    document.getElementById('opacityValue').textContent = value + '%';
+    
+    if (currentImageOverlay) {
+      currentImageOverlay.setOpacity(opacity);
+    }
+  }
+  
+  // Función para ajustar vista a la imagen
+  function fitToImage() {
+    if (currentImageOverlay) {
+      map.fitBounds(imageBounds, { padding: [20, 20] });
+    }
+  }
+  
+  // Función para remover imagen
+  function removeGeoImage() {
+    if (currentImageOverlay) {
+      imageOverlayGroup.removeLayer(currentImageOverlay);
+      currentImageOverlay = null;
+    }
+    
+    // Resetear UI
+    const panel = document.getElementById('imagePanel');
+    const uploadArea = document.getElementById('uploadArea');
+    const uploadText = document.getElementById('uploadText');
+    const opacityControl = document.getElementById('opacityControl');
+    const imageActions = document.getElementById('imageActions');
+    const imageInfo = document.getElementById('imageInfo');
+    const imageInput = document.getElementById('imageInput');
+    
+    panel.classList.remove('has-image');
+    uploadArea.classList.remove('has-image');
+    uploadText.innerHTML = 'Clic para cargar imagen<br>(PNG, JPG, TIFF)';
+    opacityControl.classList.remove('visible');
+    imageActions.classList.remove('visible');
+    imageInfo.classList.remove('visible');
+    
+    // Limpiar input
+    imageInput.value = '';
+    
+    console.log('Imagen removida');
+  }
+
+  // Ajustar vista inicial al área de mapeo
+  map.fitBounds(areaBounds, { padding: [50, 50] });
+
+  // Cargar detecciones una vez al inicio (opcional, puedes quitarlo)
+  // loadDetections();
   </script>
 </body>
 </html>

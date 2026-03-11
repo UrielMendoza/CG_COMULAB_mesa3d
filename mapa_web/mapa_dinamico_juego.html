@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui" />
+  <title>COMULAB Mesa 3D — Geopolis 2026</title>
+  <link rel="icon" href="data:," />
+  <meta name="description" content="Mapa interactivo de detecciones Mesa 3D — Dinámica Geopolis 2026" />
+  <meta name="keywords" content="Mesa 3D, COMULAB, Geopolis 2026"/>
+  <meta name="author" content="Luis Alejandro Rivera / Uriel Mendoza" />
+  <meta name="robots" content="index,follow" />
+  <meta http-equiv="cache-control" content="no-cache"/>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <script src="https://unpkg.com/leaflet@1.9.1/dist/leaflet.js"></script>
+  <link  rel="stylesheet" href="https://unpkg.com/leaflet@1.9.1/dist/leaflet.css" />
+  <script src="./plugins/leaflet-draw/js/leaflet.draw.js"></script>
+  <link  rel="stylesheet" href="./plugins/leaflet-draw/css/leaflet.draw.css" />
+  <script src="./plugins/terraformer/terraformer.js"></script>
+  <script src="./plugins/terraformer/terraformer-wkt-parser.js"></script>
+  <link  rel="stylesheet" href="./css/main.css" />
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@7.1.2/dist/togeojson.umd.js"></script>
+  <script src="./plugins/leaflet-filelayer/leaflet.filelayer.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    :root {
+      --color-bg: #0f1923;
+      --color-panel: rgba(15, 25, 35, 0.92);
+      --color-accent: #00e5a0;
+      --color-accent2: #00b8d4;
+      --color-warning: #ffab40;
+      --color-danger: #ff5252;
+      --color-easy: #00e676;
+      --color-medium: #ffab40;
+      --color-hard: #ff5252;
+      --color-text: #e0e6ed;
+      --color-muted: #7a8a9e;
+      --font-main: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --radius: 10px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    html, body { height: 100%; margin: 0; font-family: var(--font-main); }
+    #map { height: 100%; width: 100%; }
+
+    /* ===== Status badge — ARRIBA CENTRO ===== */
+    .status-badge {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 1000;
+      background: var(--color-panel); color: var(--color-text); padding: 6px 14px;
+      font-size: 12px; border-radius: var(--radius); pointer-events: none;
+      font-family: var(--font-mono); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.08);
+      white-space: nowrap; max-width: 70vw; overflow: hidden; text-overflow: ellipsis;
+    }
+    .status-badge.ok   { border-color: var(--color-easy); color: var(--color-easy); }
+    .status-badge.err  { border-color: var(--color-danger); color: var(--color-danger); }
+    .status-badge.load { border-color: var(--color-accent2); color: var(--color-accent2); }
+    .status-badge.waiting { border-color: var(--color-muted); }
+
+    /* ===== Botón actualización — abajo centro ===== */
+    .update-btn-container {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;
+    }
+    .update-btn {
+      background: linear-gradient(135deg, #00e5a0, #00b8d4);
+      color: #0f1923; border: none; padding: 12px 24px;
+      font-size: 14px; font-weight: 700; font-family: var(--font-main);
+      border-radius: 50px; cursor: pointer;
+      box-shadow: 0 4px 20px rgba(0,229,160,0.35);
+      transition: all 0.3s ease; display: flex; align-items: center; gap: 8px;
+      animation: pulse-glow 2.5s infinite;
+    }
+    .update-btn:hover { transform: scale(1.05); box-shadow: 0 6px 28px rgba(0,229,160,0.5); }
+    .update-btn:active { transform: scale(0.97); }
+    .update-btn.loading {
+      background: linear-gradient(135deg, #455a64, #37474f);
+      color: #90a4ae; animation: none; cursor: wait;
+    }
+    .update-btn i { font-size: 16px; }
+    .update-btn.loading i { animation: spin 1s linear infinite; }
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 4px 20px rgba(0,229,160,0.35); }
+      50% { box-shadow: 0 4px 32px rgba(0,229,160,0.6); }
+    }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* ===== Contador detecciones — abajo centro ===== */
+    .detection-counter {
+      position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
+      z-index: 1000; background: var(--color-panel); color: var(--color-text);
+      padding: 6px 16px; border-radius: 20px; font-size: 12px;
+      font-family: var(--font-mono); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.08); white-space: nowrap;
+    }
+    .detection-counter .count { font-weight: 700; color: var(--color-accent); }
+
+    /* ===== MODAL INICIO — nombres jugadores ===== */
+    .start-modal-overlay {
+      position: fixed; inset: 0; z-index: 5000;
+      background: rgba(8,14,22,0.85); backdrop-filter: blur(12px);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .start-modal {
+      background: var(--color-bg); border-radius: 20px; padding: 32px 36px;
+      width: 380px; max-width: 92vw;
+      border: 1px solid rgba(0,229,160,0.2);
+      box-shadow: 0 12px 60px rgba(0,0,0,0.6);
+      font-family: var(--font-main); color: var(--color-text);
+      text-align: center;
+    }
+    .start-modal h2 {
+      margin: 0 0 4px; font-size: 24px; font-weight: 800;
+      background: linear-gradient(135deg, #00e5a0, #00b8d4);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .start-modal .subtitle { font-size: 12px; color: var(--color-muted); margin-bottom: 20px; }
+    .start-modal .player-input-row {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    }
+    .start-modal .player-num {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: rgba(0,229,160,0.15); color: var(--color-accent);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; flex-shrink: 0;
+    }
+    .start-modal input[type="text"] {
+      flex: 1; padding: 10px 12px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05); color: var(--color-text);
+      font-family: var(--font-main); font-size: 14px; outline: none;
+    }
+    .start-modal input[type="text"]:focus { border-color: var(--color-accent); }
+    .start-modal input[type="text"]::placeholder { color: var(--color-muted); }
+    .start-btn {
+      margin-top: 18px; padding: 12px 36px; border: none; border-radius: 50px;
+      background: linear-gradient(135deg, #00e5a0, #00b8d4);
+      color: #0f1923; font-family: var(--font-main); font-size: 16px; font-weight: 700;
+      cursor: pointer; transition: all 0.2s;
+      box-shadow: 0 4px 20px rgba(0,229,160,0.3);
+    }
+    .start-btn:hover { transform: scale(1.04); box-shadow: 0 6px 28px rgba(0,229,160,0.5); }
+    .start-btn:active { transform: scale(0.97); }
+
+    /* ===== PANEL DE JUEGO ===== */
+    .game-panel {
+      position: absolute; top: 10px; left: 60px; z-index: 1100;
+      width: 340px; max-height: calc(100vh - 30px);
+      background: var(--color-panel); backdrop-filter: blur(12px);
+      border-radius: var(--radius);
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: var(--shadow);
+      font-family: var(--font-main); color: var(--color-text);
+      overflow: hidden; transition: all 0.35s cubic-bezier(.4,0,.2,1);
+    }
+    .game-panel.collapsed {
+      width: 48px; height: 48px; border-radius: 50%; cursor: pointer;
+      background: linear-gradient(135deg, #00e5a0, #00b8d4); border: none;
+      box-shadow: 0 3px 16px rgba(0,229,160,0.4);
+    }
+    .game-panel.collapsed:hover { transform: scale(1.08); box-shadow: 0 4px 22px rgba(0,229,160,0.6); }
+    .game-header {
+      background: linear-gradient(135deg, rgba(0,229,160,0.15), rgba(0,184,212,0.1));
+      padding: 12px 14px; display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .game-panel.collapsed .game-header {
+      padding: 0; width: 48px; height: 48px;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent; border: none;
+    }
+    .game-header-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; letter-spacing: 0.02em; }
+    .game-header-title .emoji { font-size: 18px; }
+    .game-panel.collapsed .game-header-title .header-label { display: none; }
+    .game-panel.collapsed .game-header .toggle-chevron { display: none; }
+    .toggle-chevron { font-size: 11px; color: var(--color-muted); transition: transform 0.3s; }
+
+    .game-body {
+      padding: 0; max-height: calc(100vh - 110px); overflow-y: auto;
+      transition: max-height 0.35s, opacity 0.2s; opacity: 1;
+    }
+    .game-panel.collapsed .game-body { max-height: 0; opacity: 0; overflow: hidden; pointer-events: none; padding: 0; }
+    .game-body::-webkit-scrollbar { width: 5px; }
+    .game-body::-webkit-scrollbar-track { background: transparent; }
+    .game-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+
+    .game-section { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .game-section:last-child { border-bottom: none; }
+    .game-section-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+      color: var(--color-muted); margin-bottom: 8px; font-weight: 600;
+    }
+
+    .level-tabs { display: flex; gap: 4px; }
+    .level-tab {
+      flex: 1; padding: 8px 4px; border: none; border-radius: 6px;
+      font-family: var(--font-main); font-size: 11px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+      background: rgba(255,255,255,0.05); color: var(--color-muted); text-align: center;
+    }
+    .level-tab:hover { background: rgba(255,255,255,0.1); color: var(--color-text); }
+    .level-tab.active-easy { background: rgba(0,230,118,0.2); color: var(--color-easy); box-shadow: inset 0 -2px 0 var(--color-easy); }
+    .level-tab.active-medium { background: rgba(255,171,64,0.2); color: var(--color-warning); box-shadow: inset 0 -2px 0 var(--color-warning); }
+    .level-tab.active-hard { background: rgba(255,82,82,0.2); color: var(--color-danger); box-shadow: inset 0 -2px 0 var(--color-danger); }
+
+    .buffer-config { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+    .buffer-input-group { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+    .buffer-input-group label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-muted); font-weight: 500; }
+    .buffer-input {
+      width: 100%; padding: 5px 6px; border-radius: 5px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05); color: var(--color-text);
+      font-family: var(--font-mono); font-size: 12px; text-align: center; outline: none;
+    }
+    .buffer-input:focus { border-color: var(--color-accent); }
+
+    .control-point-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 8px; border-radius: 6px; margin-bottom: 4px;
+      background: rgba(255,255,255,0.03); transition: background 0.15s; font-size: 12px;
+    }
+    .control-point-item:hover { background: rgba(255,255,255,0.07); }
+    .control-point-item .cp-name { font-weight: 500; flex: 1; }
+    .control-point-item .cp-status {
+      font-size: 10px; font-family: var(--font-mono); padding: 2px 6px; border-radius: 4px;
+    }
+    .cp-status.pending { color: var(--color-muted); }
+    .cp-status.hit { background: rgba(0,230,118,0.2); color: var(--color-easy); }
+    .cp-status.near { background: rgba(255,171,64,0.2); color: var(--color-warning); }
+    .cp-status.miss { background: rgba(255,82,82,0.15); color: var(--color-danger); }
+
+    .players-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .player-card {
+      padding: 8px; border-radius: 6px;
+      background: rgba(255,255,255,0.04); text-align: center;
+      border: 1px solid transparent; transition: all 0.2s; cursor: pointer;
+    }
+    .player-card.active-player { border-color: var(--color-accent); background: rgba(0,229,160,0.08); }
+    .player-card .p-name { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
+    .player-card .p-score { font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--color-accent); }
+    .player-card .p-detail { font-size: 9px; color: var(--color-muted); margin-top: 2px; }
+
+    .game-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .game-btn {
+      flex: 1; min-width: 90px; padding: 8px 10px; border: none; border-radius: 6px;
+      font-family: var(--font-main); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+    }
+    .game-btn:active { transform: scale(0.96); }
+    .game-btn-primary { background: linear-gradient(135deg, #00e5a0, #00b8d4); color: #0f1923; }
+    .game-btn-primary:hover { box-shadow: 0 3px 14px rgba(0,229,160,0.3); }
+    .game-btn-secondary { background: rgba(255,255,255,0.08); color: var(--color-text); }
+    .game-btn-secondary:hover { background: rgba(255,255,255,0.14); }
+    .game-btn-danger { background: rgba(255,82,82,0.15); color: var(--color-danger); }
+    .game-btn-danger:hover { background: rgba(255,82,82,0.25); }
+    .game-btn-show { background: rgba(0,184,212,0.15); color: var(--color-accent2); }
+    .game-btn-show:hover { background: rgba(0,184,212,0.25); }
+
+    /* Resultado flotante */
+    .result-toast {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0);
+      z-index: 2000; padding: 20px 32px; border-radius: 16px;
+      font-family: var(--font-main); text-align: center;
+      backdrop-filter: blur(16px); pointer-events: none;
+      animation: toastIn 0.4s forwards;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .result-toast.hit-toast { background: rgba(0,230,118,0.2); border-color: var(--color-easy); }
+    .result-toast.near-toast { background: rgba(255,171,64,0.2); border-color: var(--color-warning); }
+    .result-toast.miss-toast { background: rgba(255,82,82,0.2); border-color: var(--color-danger); }
+    .result-toast .toast-icon { font-size: 36px; }
+    .result-toast .toast-msg { font-size: 16px; font-weight: 700; margin-top: 4px; color: #fff; }
+    .result-toast .toast-detail { font-size: 12px; color: rgba(255,255,255,0.7); margin-top: 2px; font-family: var(--font-mono); }
+    @keyframes toastIn {
+      0% { transform: translate(-50%,-50%) scale(0); opacity: 0; }
+      60% { transform: translate(-50%,-50%) scale(1.1); opacity: 1; }
+      100% { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+    }
+
+    /* Scoreboard */
+    .scoreboard-overlay {
+      position: fixed; inset: 0; z-index: 3000;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .scoreboard-card {
+      background: var(--color-bg); border-radius: 16px; padding: 28px 32px;
+      min-width: 320px; max-width: 400px; text-align: center;
+      border: 1px solid rgba(0,229,160,0.2);
+      box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+      font-family: var(--font-main); color: var(--color-text);
+    }
+    .scoreboard-card h2 { margin: 0 0 6px; font-size: 22px; color: var(--color-accent); }
+    .scoreboard-card .sb-subtitle { font-size: 12px; color: var(--color-muted); margin-bottom: 16px; }
+    .sb-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 12px; border-radius: 8px; margin-bottom: 6px;
+      background: rgba(255,255,255,0.03);
+    }
+    .sb-row.winner { background: rgba(0,229,160,0.12); border: 1px solid rgba(0,229,160,0.3); }
+    .sb-row .sb-rank { font-size: 20px; width: 36px; }
+    .sb-row .sb-name { flex: 1; text-align: left; font-weight: 600; font-size: 14px; }
+    .sb-row .sb-pts { font-family: var(--font-mono); font-weight: 800; font-size: 18px; color: var(--color-accent); }
+    .sb-close-btn {
+      margin-top: 16px; padding: 10px 28px; border: none; border-radius: 8px;
+      background: linear-gradient(135deg, #00e5a0, #00b8d4);
+      color: #0f1923; font-family: var(--font-main); font-size: 14px; font-weight: 700; cursor: pointer;
+    }
+
+    /* ===== WKT y popups ===== */
+    .wkt-container {
+      max-height: 100px; overflow-y: auto; background:#f5f5f5;
+      padding: 8px; border-radius: 4px; border: 1px solid #ddd;
+      font-family: monospace; font-size: 12px;
+    }
+    .btn{ padding:8px; border:none; color:#fff; border-radius:4px; cursor:pointer; transition:all .2s ease; }
+    .btn:active{ transform:scale(0.97); }
+    .btn-grey{ background:rgb(169,169,169); } .btn-grey:hover{ background:rgb(150,150,150); }
+    .btn-green{ background:rgb(40,167,97); } .btn-green:hover{ background:rgb(30,140,80); }
+    .btn-blue{ background:rgb(0,119,255); } .btn-blue:hover{ background:rgb(0,100,220); }
+    .btn-purple{ background:rgb(138,43,226); } .btn-purple:hover{ background:rgb(120,0,255); }
+
+    #nombreModal{ position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:2000;
+      display:flex; align-items:center; justify-content:center; }
+    #nombreModal .card{
+      position:relative; background:#f9f9f9; padding:24px; border-radius:12px; width:320px;
+      box-shadow:0 4px 16px rgba(0,0,0,0.2); font-family:sans-serif; color:#333;
+    }
+    #nombreModal .close{ position:absolute; top:12px; right:12px; background:transparent;
+      border:none; font-size:20px; font-weight:bold; color:#999; cursor:pointer; }
+    .custom-marker{ display:flex; align-items:center; justify-content:center; }
+
+    .calibration-cross {
+      font-size: 24px; color: #0066ff;
+      text-shadow: 0 0 3px white, 0 0 6px white; font-weight: bold;
+    }
+
+    .map-area-legend {
+      position: absolute; bottom: 100px; left: 10px; z-index: 1000;
+      background: var(--color-panel); backdrop-filter: blur(8px);
+      padding: 10px 14px; border-radius: var(--radius);
+      font-size: 11px; font-family: var(--font-mono); color: var(--color-text);
+      box-shadow: var(--shadow); max-width: 260px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .map-area-legend h4 { margin: 0 0 8px 0; font-size: 12px; color: var(--color-text); font-family: var(--font-main); }
+    .map-area-legend .coords { color: var(--color-muted); line-height: 1.5; }
+    .map-area-legend .epsg { color: var(--color-accent2); font-weight: bold; }
+
+    /* Imagen georreferenciada panel */
+    .image-overlay-panel {
+      position: absolute; top: 80px; right: 10px; z-index: 1000;
+      background: var(--color-panel); backdrop-filter: blur(8px);
+      border-radius: var(--radius); border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: var(--shadow); font-family: var(--font-main);
+      font-size: 13px; color: var(--color-text);
+      overflow: hidden; transition: all 0.3s ease; width: 220px;
+    }
+    .image-overlay-panel.collapsed {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none;
+      box-shadow: 0 3px 12px rgba(102, 126, 234, 0.4); cursor: pointer;
+    }
+    .image-overlay-panel.collapsed:hover { transform: scale(1.1); box-shadow: 0 4px 16px rgba(102, 126, 234, 0.6); }
+    .image-overlay-panel .panel-header {
+      padding: 10px 12px;
+      background: linear-gradient(135deg, rgba(102,126,234,0.2), rgba(118,75,162,0.15));
+      cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+      user-select: none; transition: all 0.3s ease;
+    }
+    .image-overlay-panel .panel-header:hover { background: linear-gradient(135deg, rgba(102,126,234,0.3), rgba(118,75,162,0.2)); }
+    .image-overlay-panel.collapsed .panel-header {
+      padding: 0; width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center; background: transparent;
+    }
+    .image-overlay-panel .panel-header h4 { margin: 0; font-size: 13px; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .image-overlay-panel.collapsed .panel-header h4 { font-size: 18px; gap: 0; }
+    .image-overlay-panel.collapsed .panel-header h4 .header-text { display: none; }
+    .image-overlay-panel .panel-header .toggle-icon { font-size: 12px; color: var(--color-muted); }
+    .image-overlay-panel.collapsed .panel-header .toggle-icon { display: none; }
+    .image-overlay-panel .panel-content {
+      padding: 12px; max-height: 400px;
+      transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s ease; opacity: 1;
+    }
+    .image-overlay-panel.collapsed .panel-content { max-height: 0; padding: 0; opacity: 0; overflow: hidden; pointer-events: none; }
+    .image-overlay-panel.collapsed.has-image::after {
+      content: ''; position: absolute; top: -2px; right: -2px;
+      width: 14px; height: 14px; background: #28a745; border-radius: 50%;
+      border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .image-overlay-panel .upload-area {
+      border: 2px dashed rgba(255,255,255,0.15); border-radius: 6px;
+      padding: 15px 10px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 10px;
+    }
+    .image-overlay-panel .upload-area:hover { border-color: #667eea; background: rgba(102,126,234,0.08); }
+    .image-overlay-panel .upload-area.has-image { border-color: var(--color-easy); background: rgba(0,230,118,0.06); }
+    .image-overlay-panel .upload-area i { font-size: 24px; color: var(--color-muted); margin-bottom: 6px; }
+    .image-overlay-panel .upload-area.has-image i { color: var(--color-easy); }
+    .image-overlay-panel .upload-area span { display: block; font-size: 11px; color: var(--color-muted); }
+    .image-overlay-panel input[type="file"] { display: none; }
+    .image-overlay-panel .opacity-control { display: none; margin-top: 10px; }
+    .image-overlay-panel .opacity-control.visible { display: block; }
+    .image-overlay-panel .opacity-control label { display: flex; justify-content: space-between; font-size: 12px; color: var(--color-muted); margin-bottom: 4px; }
+    .image-overlay-panel .opacity-control input[type="range"] { width: 100%; cursor: pointer; }
+    .image-overlay-panel .image-actions { display: none; margin-top: 10px; gap: 6px; }
+    .image-overlay-panel .image-actions.visible { display: flex; }
+    .image-overlay-panel .btn-small { flex: 1; padding: 6px 8px; font-size: 11px; border: none; border-radius: 4px; cursor: pointer; transition: all 0.2s; font-family: var(--font-main); }
+    .image-overlay-panel .btn-remove { background: rgba(255,82,82,0.2); color: var(--color-danger); }
+    .image-overlay-panel .btn-remove:hover { background: rgba(255,82,82,0.35); }
+    .image-overlay-panel .btn-fit { background: rgba(0,184,212,0.2); color: var(--color-accent2); }
+    .image-overlay-panel .btn-fit:hover { background: rgba(0,184,212,0.35); }
+    .image-overlay-panel .image-info { display: none; font-size: 10px; color: var(--color-muted); margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06); }
+    .image-overlay-panel .image-info.visible { display: block; }
+
+    .target-marker-icon { display: flex; align-items: center; justify-content: center; }
+    .target-ring {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 3px solid; animation: targetPulse 1.5s infinite;
+    }
+    .target-ring.no-pulse { animation: none; }
+    @keyframes targetPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(1.3); }
+    }
+
+    .leaflet-popup-content-wrapper { border-radius: 8px !important; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="status" class="status-badge waiting">Esperando actualización...</div>
+
+  <div class="detection-counter">
+    Detecciones: <span class="count" id="detectionCount">0</span>
+  </div>
+
+  <div class="update-btn-container">
+    <button id="updateBtn" class="update-btn" onclick="manualUpdate()">
+      <i class="fas fa-sync-alt"></i>
+      <span>Actualizar Detecciones</span>
+    </button>
+  </div>
+
+  <div class="map-area-legend" id="areaLegend">
+    <h4>📍 Encuadre de Imagen</h4>
+    <div class="coords">
+      <span class="epsg">EPSG:32614</span> — WGS 84 / UTM 14N<br>
+      E: 409,907 – 612,270 m<br>
+      N: 2,074,280 – 2,184,872 m<br>
+      ~202 km (E–W) × ~111 km (N–S)
+    </div>
+  </div>
+
+  <div class="image-overlay-panel collapsed" id="imagePanel" title="Imagen de Fondo">
+    <div class="panel-header" onclick="toggleImagePanel()">
+      <h4><i class="fas fa-image"></i><span class="header-text"> Imagen de Fondo</span></h4>
+      <span class="toggle-icon"><i class="fas fa-chevron-down"></i></span>
+    </div>
+    <div class="panel-content">
+      <div class="upload-area" id="uploadArea" onclick="document.getElementById('imageInput').click()">
+        <i class="fas fa-cloud-upload-alt"></i>
+        <span id="uploadText">Clic para cargar imagen<br>(PNG, JPG, TIFF)</span>
+      </div>
+      <input type="file" id="imageInput" accept="image/*" onchange="loadGeoImage(this)">
+      <div class="opacity-control" id="opacityControl">
+        <label><span>Opacidad:</span><span id="opacityValue">100%</span></label>
+        <input type="range" id="opacitySlider" min="0" max="100" value="100" oninput="updateImageOpacity(this.value)">
+      </div>
+      <div class="image-actions" id="imageActions">
+        <button class="btn-small btn-fit" onclick="event.stopPropagation(); fitToImage()"><i class="fas fa-expand"></i> Ajustar vista</button>
+        <button class="btn-small btn-remove" onclick="event.stopPropagation(); removeGeoImage()"><i class="fas fa-trash"></i> Quitar</button>
+      </div>
+      <div class="image-info" id="imageInfo">
+        <strong>Archivo:</strong> <span id="imageName">-</span><br>
+        <strong>Georreferenciada a:</strong> Encuadre Sentinel-2
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL DE INICIO — NOMBRES ===== -->
+  <div class="start-modal-overlay" id="startModal">
+    <div class="start-modal">
+      <h2>🎯 Geopolis 2026</h2>
+      <div class="subtitle">"Nuestros Ojos en el Cielo" — LANOT, IG-UNAM</div>
+      <div style="text-align:left; margin-bottom: 6px; font-size:13px; color:var(--color-muted);">Ingresa los nombres de los 4 participantes:</div>
+      <div class="player-input-row"><div class="player-num">1</div><input type="text" id="pName0" placeholder="Jugador 1"></div>
+      <div class="player-input-row"><div class="player-num">2</div><input type="text" id="pName1" placeholder="Jugador 2"></div>
+      <div class="player-input-row"><div class="player-num">3</div><input type="text" id="pName2" placeholder="Jugador 3"></div>
+      <div class="player-input-row"><div class="player-num">4</div><input type="text" id="pName3" placeholder="Jugador 4"></div>
+      <button class="start-btn" onclick="startGame()">Comenzar Dinámica</button>
+    </div>
+  </div>
+
+  <!-- ===== PANEL DE JUEGO ===== -->
+  <div class="game-panel" id="gamePanel">
+    <div class="game-header" onclick="toggleGamePanel()">
+      <div class="game-header-title">
+        <span class="emoji">🎯</span>
+        <span class="header-label">Dinámica Geopolis 2026</span>
+      </div>
+      <span class="toggle-chevron"><i class="fas fa-chevron-down"></i></span>
+    </div>
+    <div class="game-body" id="gameBody">
+      <div class="game-section">
+        <div class="game-section-title">Jugadores</div>
+        <div class="players-grid" id="playersGrid"></div>
+      </div>
+      <div class="game-section">
+        <div class="game-section-title">Nivel actual</div>
+        <div class="level-tabs" id="levelTabs">
+          <button class="level-tab active-easy" data-level="easy" onclick="selectLevel('easy')">🟢 Fácil</button>
+          <button class="level-tab" data-level="medium" onclick="selectLevel('medium')">🟡 Medio</button>
+          <button class="level-tab" data-level="hard" onclick="selectLevel('hard')">🔴 Difícil</button>
+        </div>
+        <div class="buffer-config">
+          <div class="buffer-input-group">
+            <label>🟢 Fácil (km)</label>
+            <input class="buffer-input" id="bufferEasy" type="number" value="10" min="0.5" step="0.5" onchange="updateBuffers()">
+          </div>
+          <div class="buffer-input-group">
+            <label>🟡 Medio (km)</label>
+            <input class="buffer-input" id="bufferMedium" type="number" value="5" min="0.5" step="0.5" onchange="updateBuffers()">
+          </div>
+          <div class="buffer-input-group">
+            <label>🔴 Difícil (km)</label>
+            <input class="buffer-input" id="bufferHard" type="number" value="2" min="0.5" step="0.5" onchange="updateBuffers()">
+          </div>
+        </div>
+      </div>
+      <div class="game-section">
+        <div class="game-section-title">Puntos de control</div>
+        <div id="controlPointsList"></div>
+      </div>
+      <div class="game-section">
+        <div class="game-section-title">Acciones</div>
+        <div class="game-actions">
+          <button class="game-btn game-btn-primary" onclick="checkDetections()"><i class="fas fa-crosshairs"></i> Verificar</button>
+          <button class="game-btn game-btn-show" onclick="showControlPoints()"><i class="fas fa-eye"></i> Mostrar</button>
+          <button class="game-btn game-btn-secondary" onclick="nextPlayer()"><i class="fas fa-user-friends"></i> Siguiente</button>
+          <button class="game-btn game-btn-secondary" onclick="showScoreboard()"><i class="fas fa-trophy"></i> Marcador</button>
+          <button class="game-btn game-btn-danger" onclick="resetGame()"><i class="fas fa-redo"></i> Reiniciar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  /* =============================================
+     0) Traducción Leaflet.Draw
+     ============================================= */
+  L.drawLocal = {
+    draw: {
+      toolbar: {
+        actions: { title:'Cancelar dibujo', text:'Cancelar' },
+        finish:  { title:'Terminar dibujo', text:'Terminar' },
+        undo:    { title:'Eliminar último punto dibujado', text:'Eliminar último punto' },
+        buttons: {
+          polyline:'Dibujar una línea', polygon:'Dibujar un polígono',
+          rectangle:'Dibujar un rectángulo', circle:'Dibujar un círculo con radio personalizado',
+          marker:'Dibujar un marcador (punto)', circlemarker:'Dibujar un marcador circular (10 metros)'
+        }
+      },
+      handlers: {
+        circle: { tooltip:{ start:'Haz clic y arrastra para dibujar un círculo.' }, radius:'Radio' },
+        circlemarker: { tooltip:{ start:'Haz clic en el mapa para colocar un marcador circular de 10 metros de diámetro.' } },
+        marker: { tooltip:{ start:'Haz clic en el mapa para colocar un marcador.' } },
+        polygon:{ tooltip:{ start:'Haz clic para empezar a dibujar la figura.', cont:'Haz clic para continuar dibujando la figura.', end:'Haz clic en el primer punto para cerrar esta figura.' } },
+        polyline:{ error:'<strong>Error:</strong> Una línea no puede cruzar sobre sí misma',
+                   tooltip:{ start:'Haz clic para comenzar a dibujar la línea.', cont:'Haz clic para continuar dibujando la línea.', end:'Haz clic en el último punto para terminar la línea.' } },
+        rectangle:{ tooltip:{ start:'Haz clic y arrastra para dibujar un rectángulo.' } },
+        simpleshape:{ tooltip:{ end:'Suelta el mouse para terminar de dibujar.' } }
+      }
+    },
+    edit: {
+      toolbar: {
+        actions: {
+          save:{ title:'Guardar cambios', text:'Guardar' },
+          cancel:{ title:'Cancelar edición, descarta todos los cambios', text:'Cancelar' },
+          clearAll:{ title:'Limpiar todas las figuras', text:'Limpiar todo lo dibujado' }
+        },
+        buttons: {
+          edit:'Editar figuras', editDisabled:'No hay figuras para editar',
+          remove:'Eliminar figuras', removeDisabled:'No hay figuras para eliminar'
+        }
+      },
+      handlers: {
+        edit:{ tooltip:{ text:'Arrastra los marcadores para editar los elementos.', subtext:'Haz clic en cancelar para deshacer los cambios.' } },
+        remove:{ tooltip:{ text:'Haz clic en un elemento para eliminarlo.' } }
+      }
+    }
+  };
+
+  /* =============================================
+     1) Proyección — EPSG:32614 (WGS 84 / UTM zona 14N)
+        Coordenadas del documento Sentinel-2
+     ============================================= */
+  proj4.defs("EPSG:32614", "+proj=utm +zone=14 +datum=WGS84 +units=m +no_defs");
+
+  // Encuadre de la imagen Sentinel-2 según el informe técnico
+  const AREA_UTM = {
+    xmin: 409907,   ymin: 2074280,
+    xmax: 612270,   ymax: 2184872,
+    epsg: 'EPSG:32614'
+  };
+
+  function utmToLatLng(x, y) {
+    const [lng, lat] = proj4('EPSG:32614', 'EPSG:4326', [x, y]);
+    return [lat, lng];
+  }
+
+  // Esquinas WGS84 (del informe)
+  // NO: 19.7575, -99.8599 | NE: 19.7563, -97.9284
+  // SO: 18.7581, -99.8547 | SE: 18.7570, -97.9349
+  const areaBounds = [
+    [18.7581, -99.8547],  // SW
+    [19.7575, -99.8599],  // NW
+    [19.7563, -97.9284],  // NE
+    [18.7570, -97.9349],  // SE
+  ];
+
+  /* =============================================
+     2) Mapa base + grupos
+     ============================================= */
+  const centerLatLng = [19.26, -98.90]; // Centro aprox de la imagen
+
+  const map = L.map('map', { center: centerLatLng, zoom: 9, maxZoom: 22 });
+
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  const osmHOT = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OSM contributors, HOT' });
+  const openTopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '&copy; OpenTopoMap' });
+  const cartoPositron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, attribution: '&copy; CARTO' });
+  const esriImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20, attribution: 'Tiles &copy; Esri' });
+  const googleSat = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { attribution:'&copy; Google Maps', maxZoom:22 });
+
+  const baseMaps = {
+    'OpenStreetMap': osm, 'OSM Humanitarian': osmHOT, 'OpenTopoMap': openTopo,
+    'Carto Positron': cartoPositron, 'Esri World Imagery': esriImagery, 'Google Satellite': googleSat
+  };
+
+  const drawnItems        = L.featureGroup().addTo(map);
+  const detectedGroup     = L.featureGroup().addTo(map);
+  const userLoadedGroup   = L.featureGroup().addTo(map);
+  const calibrationGroup  = L.featureGroup().addTo(map);
+  const mapAreaGroup      = L.featureGroup().addTo(map);
+  const imageOverlayGroup = L.featureGroup().addTo(map);
+  const gameTargetsGroup  = L.featureGroup().addTo(map);
+  const gameBufferGroup   = L.featureGroup().addTo(map);
+  const allEditableLayers = L.featureGroup().addTo(map);
+
+  let currentImageOverlay = null;
+
+  const imageBounds = L.latLngBounds(
+    [areaBounds[0][0], areaBounds[0][1]], // SW
+    [areaBounds[2][0], areaBounds[2][1]]  // NE
+  );
+
+  // Rectángulo del encuadre
+  const areaPolygon = L.polygon(areaBounds, {
+    color: '#0066ff', weight: 3, fillColor: '#0066ff', fillOpacity: 0.05,
+    dashArray: '10, 5', interactive: false
+  }).addTo(mapAreaGroup);
+  areaPolygon.bindTooltip('Encuadre Sentinel-2<br>Nevado de Toluca → La Malinche', { permanent: false, direction: 'center' });
+
+  // Cruces de calibración en esquinas
+  const crossIcon = L.divIcon({ className: 'calibration-cross', html: '✚', iconSize: [24, 24], iconAnchor: [12, 12] });
+  areaBounds.forEach((coord, i) => {
+    const labels = ['SW', 'NW', 'NE', 'SE'];
+    L.marker(coord, { icon: crossIcon })
+      .bindTooltip(`Cruz ${labels[i]}`, { permanent: false, direction: 'top' })
+      .addTo(calibrationGroup);
+  });
+
+  const layerControl = L.control.layers(baseMaps, {
+    '🖼️ Imagen Georreferenciada': imageOverlayGroup,
+    '🟡 Detecciones': detectedGroup,
+    '🎯 Puntos de Control': gameTargetsGroup,
+    '⭕ Buffers': gameBufferGroup,
+    '📁 Capas Cargadas': userLoadedGroup,
+    '✏️ Figuras Dibujadas': drawnItems,
+    '📍 Encuadre Imagen': mapAreaGroup,
+    '✚ Cruces Calibración': calibrationGroup
+  }, { collapsed: true }).addTo(map);
+
+  const drawControl = new L.Control.Draw({
+    edit: { featureGroup: allEditableLayers, poly:{ allowIntersection:false } },
+    draw: { polygon:{ allowIntersection:false, showArea:true } }
+  });
+  map.addControl(drawControl);
+
+  /* =============================================
+     3) Utilidades
+     ============================================= */
+  const statusEl = document.getElementById('status');
+  const updateBtn = document.getElementById('updateBtn');
+  const detectionCountEl = document.getElementById('detectionCount');
+
+  function _round(num,len){ return Math.round(num*Math.pow(10,len))/Math.pow(10,len); }
+  function getLayerTypeName(layer){
+    if(layer instanceof L.Marker && !(layer instanceof L.CircleMarker)) return "Punto";
+    if(layer instanceof L.CircleMarker) return "Círculo";
+    if(layer instanceof L.Polygon && !(layer instanceof L.Rectangle)) return "Polígono";
+    if(layer instanceof L.Polyline) return "Línea";
+    return "Figura";
+  }
+  function createCircularPolygon(center, radius){
+    const R=6378137, n=36, coords=[];
+    for(let i=0;i<n;i++){
+      const ang=i*360/n*Math.PI/180;
+      const lat=center.lat+(radius/R)*Math.sin(ang)*180/Math.PI;
+      const lng=center.lng+(radius/R)*Math.cos(ang)*180/Math.PI/Math.cos(center.lat*Math.PI/180);
+      coords.push([lng,lat]);
+    }
+    coords.push(coords[0]);
+    return { type:"Feature", geometry:{ type:"Polygon", coordinates:[coords] }, properties:{} };
+  }
+  function hexToKMLColor(hex, opacity=1){
+    if(!hex || !/^#([0-9A-F]{3}){1,2}$/i.test(hex)) hex='#3388ff';
+    const alpha=Math.round(opacity*255).toString(16).padStart(2,'0');
+    const full=hex.length===4?`#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`:hex;
+    const r=full.substring(1,3), g=full.substring(3,5), b=full.substring(5,7);
+    return alpha+b+g+r;
+  }
+
+  /* =============================================
+     4) Registro global id -> layer
+     ============================================= */
+  const layerRegistry = new Map();
+  function registerLayer(layer){ layerRegistry.set(L.stamp(layer), layer); }
+  function unregisterLayer(layer){ layerRegistry.delete(L.stamp(layer)); }
+  function getAnyLayerById(id){ return layerRegistry.get(id) || null; }
+
+  /* =============================================
+     5) Modal edición de props
+     ============================================= */
+  function handleEscapeKey(e){ if(e.key==='Escape') closeNombreModal(); }
+  function closeNombreModal(){
+    const m=document.getElementById('nombreModal'); if(m) m.remove();
+    document.removeEventListener('keydown',handleEscapeKey);
+  }
+  function openNombreModal(layerId){
+    const layer=getAnyLayerById(layerId);
+    if(!layer) return;
+    const props = layer.feature?.properties || {};
+    const currentNombre = props.nombre || "";
+    const currentDescripcion = props.descripcion || "";
+    const currentColor = layer.options.color || layer.options.fillColor || "#3388ff";
+    const currentFillOpacity = layer.options.fillOpacity ?? 0.5;
+    const currentWeight = layer.options.weight ?? 2;
+    const isMarker = (layer instanceof L.Marker) && !(layer instanceof L.CircleMarker);
+    const isPolyline = (layer instanceof L.Polyline) && !(layer instanceof L.Polygon);
+    const preset = ['#ff0000','#00cc00','#0000ff','#ffff00','#ff00ff','#00ffff','#a52a2a','#ff9900','#3388ff','#000000','#ffffff'];
+    const isCustom = !preset.some(c=>c.toLowerCase()===String(currentColor).toLowerCase());
+
+    const modal = `
+    <div id="nombreModal"><div class="card">
+      <button class="close" onclick="closeNombreModal()">&times;</button>
+      <h3 style="margin:0 0 16px 0;font-size:18px;color:#222;">Editar propiedades</h3>
+      <label>Nombre:</label>
+      <input id="nombreInput" type="text" value="${currentNombre}" style="width:100%;padding:10px;margin-bottom:12px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box;"/>
+      <label>Descripción:</label>
+      <textarea id="descripcionInput" rows="3" style="width:100%;padding:10px;margin-bottom:12px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box;resize:vertical;">${currentDescripcion}</textarea>
+      <label style="font-weight:600;">Color:</label>
+      <div id="colorButtons" style="margin:8px 0 16px;display:flex;flex-wrap:wrap;gap:6px;">
+        ${preset.map(c=>`<button class="color-btn" data-color="${c}" style="background:${c};width:24px;height:24px;border:1px solid #ccc;border-radius:50%;cursor:pointer;"></button>`).join('')}
+        <button id="customColorBtn" title="Color personalizado" style="background:${isCustom?currentColor:'linear-gradient(45deg, red, yellow, green, cyan, blue, magenta)'};width:24px;height:24px;border:1px solid #ccc;border-radius:50%;cursor:pointer;"></button>
+        <input type="color" id="customColorPicker" style="display:none;" value="${isCustom?currentColor:'#3388ff'}" />
+      </div>
+      ${ isMarker || isPolyline ? '' : `<label style="font-weight:600;">Transparencia: <span id="opacityValue2">${currentFillOpacity}</span></label><input id="opacityRange" type="range" min="0" max="1" step="0.1" value="${currentFillOpacity}" style="width:100%;margin-bottom:16px;"/>`}
+      ${ isMarker ? '' : `<label style="font-weight:600;">Grosor: <span id="weightValue">${currentWeight}</span></label><input id="weightRange" type="range" min="1" max="10" step="1" value="${currentWeight}" style="width:100%;margin-bottom:20px;"/>`}
+      ${ (isMarker||isPolyline) ? '<input type="hidden" id="opacityRange" value="'+currentFillOpacity+'">' : '' }
+      ${ isMarker ? '<input type="hidden" id="weightRange" value="'+currentWeight+'">' : '' }
+      <div style="text-align:right;">
+        <button class="btn btn-grey" onclick="closeNombreModal()">Cancelar</button>
+        <button class="btn btn-blue" onclick="saveNombre(${layerId})">Guardar</button>
+      </div>
+    </div></div>`;
+    document.body.insertAdjacentHTML('beforeend', modal);
+
+    function selectColor(color){
+      document.querySelectorAll('.color-btn').forEach(b=>b.style.outline='none');
+      const cbtn = Array.from(document.querySelectorAll('.color-btn')).find(b=>b.dataset.color.toLowerCase()===String(color).toLowerCase());
+      if(cbtn) cbtn.style.outline='2px solid #000';
+      document.getElementById('colorButtons').setAttribute('data-selected-color', color);
+      document.getElementById('customColorBtn').style.outline = (!cbtn ? '2px solid #000' : 'none');
+    }
+    document.querySelectorAll('.color-btn').forEach(btn=> btn.addEventListener('click', ()=> selectColor(btn.dataset.color)));
+    const colorPicker=document.getElementById('customColorPicker');
+    document.getElementById('customColorBtn').addEventListener('click', ()=> colorPicker.click());
+    colorPicker.addEventListener('input', e=>{ const c=e.target.value; document.getElementById('customColorBtn').style.background=c; selectColor(c); });
+    selectColor(currentColor);
+    const op=document.getElementById('opacityRange'); if(op && op.type!=='hidden') op.addEventListener('input', e=> document.getElementById('opacityValue2').textContent=e.target.value);
+    const wt=document.getElementById('weightRange');  if(wt && wt.type!=='hidden') wt.addEventListener('input', e=> document.getElementById('weightValue').textContent=e.target.value);
+    document.addEventListener('keydown', handleEscapeKey);
+  }
+
+  function saveNombre(layerId){
+    const layer=getAnyLayerById(layerId); if(!layer) return;
+    const nombre=document.getElementById('nombreInput').value;
+    const descripcion=document.getElementById('descripcionInput').value;
+    const selectedColor=document.getElementById('colorButtons').getAttribute('data-selected-color') || "#3388ff";
+    const fillOpacity=parseFloat(document.getElementById('opacityRange').value);
+    const weightInput=document.getElementById('weightRange');
+    const weight=weightInput ? parseInt(weightInput.value) : undefined;
+    if(!layer.feature) layer.feature=layer.toGeoJSON();
+    if(!layer.feature.properties) layer.feature.properties={};
+    layer.feature.properties.nombre = (nombre.trim()===''? null : nombre);
+    layer.feature.properties.descripcion = descripcion;
+    if(layer instanceof L.Marker && !(layer instanceof L.CircleMarker)){
+      layer.setIcon(L.divIcon({ className:'custom-marker', html:`<div style="background-color:${selectedColor};width:12px;height:12px;border-radius:50%;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.3);"></div>`, iconSize:[16,16], iconAnchor:[8,8] }));
+      layer.options.color=selectedColor;
+    } else if(layer.setStyle){
+      layer.setStyle({ color:selectedColor, weight:(weight!==undefined?weight:(layer.options.weight??2)), opacity:1, fillColor:selectedColor, fillOpacity });
+    }
+    bindPopupForLayer(layer); persistAnnotationForLayer(layer); closeNombreModal();
+  }
+
+  /* =============================================
+     6) Dibujo del usuario
+     ============================================= */
+  map.on(L.Draw.Event.CREATED, function(ev){
+    const layer=ev.layer;
+    if(layer.setStyle) layer.setStyle({ color:'#3388ff', weight:2, fillColor:'#3388ff', fillOpacity:0.5 });
+    layer.feature=layer.toGeoJSON(); layer._isUserDrawn=true;
+    bindPopupForLayer(layer); drawnItems.addLayer(layer); allEditableLayers.addLayer(layer);
+    registerLayer(layer); updateDetectionCount();
+  });
+  map.on(L.Draw.Event.EDITED, function(ev){
+    ev.layers.eachLayer(function(layer){
+      if(layer instanceof L.CircleMarker){
+        const r=layer.getRadius(), center=layer.getLatLng();
+        const gjPoly=createCircularPolygon(center, r);
+        gjPoly.properties={ ...(layer.feature?.properties||{}), radius:_round(r,2) };
+        layer.feature=gjPoly;
+      } else { const gj=layer.toGeoJSON(); gj.properties={ ...(layer.feature?.properties||{}) }; layer.feature=gj; }
+      bindPopupForLayer(layer); persistAnnotationForLayer(layer);
+    }); updateDetectionCount();
+  });
+  map.on(L.Draw.Event.DELETED, function(ev){
+    ev.layers.eachLayer(function(layer){
+      unregisterLayer(layer);
+      if(layer._isUserDrawn && drawnItems.hasLayer(layer)) drawnItems.removeLayer(layer);
+      if(layer._isUserLoaded && userLoadedGroup.hasLayer(layer)) userLoadedGroup.removeLayer(layer);
+      if(layer._isDetection && detectedGroup.hasLayer(layer)){
+        detectedGroup.removeLayer(layer);
+        for(const [key, lyr] of currentDetectionLayers.entries()){ if(lyr===layer){ currentDetectionLayers.delete(key); break; } }
+      }
+      const f=layer.feature||layer.toGeoJSON(); delete annotationsStore[featureKey(f)];
+      try{ localStorage.setItem('detections_annotations', JSON.stringify(annotationsStore)); }catch(_){}
+    }); updateDetectionCount();
+  });
+
+  /* =============================================
+     7) Popups
+     ============================================= */
+  function bindPopupForLayer(layer){
+    const gj=layer.feature||layer.toGeoJSON();
+    let wkt='';
+    if(window.Terraformer && Terraformer.WKT && gj && gj.geometry){ try{ wkt=Terraformer.WKT.convert(gj.geometry); }catch(_){} }
+    const name=getLayerTypeName(layer);
+    const nombre=gj.properties?.nombre??null;
+    const descripcion=gj.properties?.descripcion??"";
+    const colorProp=gj.properties?.color||'';
+    let content=`<strong>Tipo:</strong> ${name}<br>`;
+    if(colorProp) content+=`<strong>Color detectado:</strong> <span style="color:${colorProp==='yellow'?'#cc9900':'green'}">${colorProp}</span><br>`;
+    content+=`<strong>Nombre:</strong> ${nombre??'Sin nombre'}<br><strong>Descripción:</strong> ${descripcion||'Sin descripción'}<br>`;
+    content+=`<button class="btn btn-grey" onclick="openNombreModal(${L.stamp(layer)})" style="margin-top:8px;"><i class="fa fa-edit" style="margin-right:6px;"></i>Editar</button><br><hr/>`;
+    if(wkt){
+      content+=`<strong>WKT:</strong><br><div class="wkt-container" id="wkt-container">${wkt}</div><br>`;
+      content+=`<button class="btn btn-grey" onclick="copyWKTtoClipboard()"><i class="fa fa-copy" style="margin-right:6px;"></i>Copiar</button>`;
+      const safeName=(nombre||name).replace(/"/g,'\\"');
+      const whatsappText=(nombre!==null||descripcion!=='')?`*Nombre:* ${nombre??'Sin nombre'}\n*Descripción:* ${descripcion}\n*WKT:*\n\n${wkt}`:wkt;
+      content+=`<a href="https://wa.me/?text=${encodeURIComponent(whatsappText)}" target="_blank" style="text-decoration:none;margin-left:10px;"><button class="btn btn-grey"><i class="fab fa-whatsapp" style="margin-right:6px;"></i>Compartir</button></a>`;
+      content+=`<p style="font-size:12px;">Valida en <a href="https://wktmap.com/" target="_blank">wktmap.com</a></p><hr/>`;
+      content+=`<div><strong>Descargar:</strong><br><br><div style="display:flex;gap:10px;flex-wrap:wrap;">`;
+      content+=`<button class="btn btn-green" onclick='downloadGeoJSON(${JSON.stringify(gj)},"${safeName}")'><i class="fa fa-download"></i> GeoJSON</button>`;
+      content+=`<button class="btn btn-blue" onclick='downloadKML(${JSON.stringify(wkt)},"${safeName}")'><i class="fa fa-download"></i> KML</button>`;
+      content+=`<button class="btn btn-purple" onclick='convertWKTtoCSV(${JSON.stringify(wkt)},"${safeName}")'><i class="fa fa-download"></i> CSV</button>`;
+      content+=`</div></div>`;
+    } else { content+=`<em style="color:#888">WKT no disponible.</em>`; }
+    layer.bindPopup(content);
+  }
+
+  function copyWKTtoClipboard(){ const c=document.getElementById('wkt-container'); navigator.clipboard.writeText(c?(c.textContent||c.innerText):'').catch(()=>{}); }
+
+  function downloadGeoJSON(geojson, name){
+    const blob=new Blob([JSON.stringify(geojson,null,2)],{type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(name||"Figura")+'.geojson'; a.click();
+  }
+  function downloadKML(wkt, name){
+    let gj; try{ gj=Terraformer.WKT.parse(wkt); }catch(e){ return; }
+    let coords="";
+    if(gj.type==='Point') coords=`<Point><coordinates>${gj.coordinates[0]},${gj.coordinates[1]},0</coordinates></Point>`;
+    else if(gj.type==='Polygon'){ coords=`<Polygon><outerBoundaryIs><LinearRing><coordinates>`; gj.coordinates[0].forEach(c=>coords+=`${c[0]},${c[1]},0 `); coords+=`</coordinates></LinearRing></outerBoundaryIs></Polygon>`; }
+    else if(gj.type==='LineString'){ coords=`<LineString><coordinates>`; gj.coordinates.forEach(c=>coords+=`${c[0]},${c[1]},0 `); coords+=`</coordinates></LineString>`; }
+    else return;
+    const kc=hexToKMLColor('#3388ff',1);
+    const st=(gj.type==='Polygon')?`<Style><LineStyle><color>${kc}</color><width>2</width></LineStyle><PolyStyle><color>${hexToKMLColor('#3388ff',0.5)}</color><fill>1</fill><outline>1</outline></PolyStyle></Style>`:`<Style><LineStyle><color>${kc}</color><width>2</width></LineStyle></Style>`;
+    const kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark><name>${name||'Sin nombre'}</name>${st}${coords}</Placemark></Document></kml>`;
+    const blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(name||'Figura')+'.kml'; a.click();
+  }
+  function convertWKTtoCSV(wkt, name){
+    try{
+      const gj=Terraformer.WKT.parse(wkt); let csv="type,x,y,nombre,descripcion\n";
+      const esc=s=>`"${String(s).replace(/"/g,'""')}"`;
+      if(gj.type==='Point'){ csv+=`Point,${gj.coordinates[0]},${gj.coordinates[1]},${esc(name)},${esc('')}\n`; }
+      else if(gj.type==='Polygon'){ gj.coordinates[0].forEach(([x,y])=>csv+=`Polygon,${x},${y},${esc(name)},${esc('')}\n`); }
+      else if(gj.type==='LineString'){ gj.coordinates.forEach(([x,y])=>csv+=`Line,${x},${y},${esc(name)},${esc('')}\n`); }
+      else return;
+      const blob=new Blob([csv],{type:'text/csv'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(name||'Figura')+'.csv'; a.click();
+    }catch(e){}
+  }
+
+  /* =============================================
+     8) FileLayer
+     ============================================= */
+  const fileLoader = L.Control.fileLayerLoad({
+    layer: function(geojson){
+      return L.geoJson(geojson, {
+        style: function(){ return { color:'#ff6600', weight:2, fillColor:'#ff6600', fillOpacity:0.4 }; },
+        pointToLayer: function(f, ll){ return L.circleMarker(ll, { radius:8, color:'#000', weight:2, fillColor:'#ff6600', fillOpacity:0.8 }); },
+        onEachFeature: function(f, layer){
+          layer.feature=f; layer._isUserLoaded=true;
+          bindPopupForLayer(layer); registerLayer(layer);
+          userLoadedGroup.addLayer(layer); allEditableLayers.addLayer(layer);
+        }
+      });
+    }, addToMap:true, fileSizeLimit:10240, formats:['.geojson','.json','.kml','.gpx']
+  }).addTo(map);
+  fileLoader.loader.on('data:loaded', function(ev){
+    statusEl.className='status-badge ok'; statusEl.textContent=`✓ "${ev.filename}" cargado`;
+    updateDetectionCount();
+    if(userLoadedGroup.getLayers().length>0){ try{ map.fitBounds(userLoadedGroup.getBounds().pad(0.1)); }catch(e){} }
+  });
+  fileLoader.loader.on('data:error', function(){
+    statusEl.className='status-badge err'; statusEl.textContent='Error al cargar archivo';
+  });
+
+  /* =============================================
+     9) Detecciones — Carga manual
+     ============================================= */
+  function loadAnnotationsStore(){ try{ return JSON.parse(localStorage.getItem('detections_annotations'))||{}; }catch(e){ return {}; } }
+  const annotationsStore = loadAnnotationsStore();
+
+  function featureKey(f){
+    const type=f.geometry?.type||'Unknown', col=f.properties?.color||'';
+    function rc(c){ if(typeof c[0]==='number') return [Number(c[0].toFixed(6)),Number(c[1].toFixed(6))]; return c.map(rc); }
+    return JSON.stringify({t:type,c:col,g:rc(f.geometry?.coordinates||[])});
+  }
+  function applyAnnotationToLayer(layer,f){
+    const ann=annotationsStore[featureKey(f)]; if(!ann){ layer.feature=f; return; }
+    if(!f.properties) f.properties={};
+    f.properties.nombre=ann.nombre??f.properties.nombre??null;
+    f.properties.descripcion=ann.descripcion??f.properties.descripcion??"";
+    const {color,weight,fillOpacity}=ann.style||{};
+    if(layer instanceof L.Marker && !(layer instanceof L.CircleMarker) && color){
+      layer.setIcon(L.divIcon({ className:'custom-marker', html:`<div style="background-color:${color};width:12px;height:12px;border-radius:50%;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.3);"></div>`, iconSize:[16,16], iconAnchor:[8,8] }));
+      layer.options.color=color;
+    } else if(layer.setStyle){
+      const st={}; if(color){ st.color=color; st.fillColor=color; } if(weight!=null) st.weight=weight; if(fillOpacity!=null) st.fillOpacity=fillOpacity;
+      if(Object.keys(st).length) layer.setStyle(st);
+    }
+    layer.feature=f; bindPopupForLayer(layer);
+  }
+  function persistAnnotationForLayer(layer){
+    const f=layer.feature||layer.toGeoJSON();
+    annotationsStore[featureKey(f)]={
+      nombre:f.properties?.nombre??null, descripcion:f.properties?.descripcion??'',
+      style:{ color:layer.options.color||layer.options.fillColor||f.properties?.color||null, weight:layer.options.weight??null, fillOpacity:layer.options.fillOpacity??null }
+    };
+    try{ localStorage.setItem('detections_annotations',JSON.stringify(annotationsStore)); }catch(_){}
+  }
+
+  function styleByProps(f){
+    const col=f.properties?.color||'#3388ff';
+    const cm={ 'yellow':'#FFD700', 'green':'#228B22' };
+    const fc=cm[col]||col;
+    return { color:fc, weight:3, fillColor:fc, fillOpacity:0.35 };
+  }
+  function pointToLayerFn(f, ll){
+    const col=f.properties?.color||'#3388ff';
+    const cm={ 'yellow':'#FFD700', 'green':'#228B22' };
+    return L.circleMarker(ll, { radius:8, color:'#000', weight:2, fillColor:cm[col]||col, fillOpacity:0.8, opacity:1 });
+  }
+  function onEachDetectionFeature(f, layer){
+    layer.feature=f; layer._isDetection=true;
+    applyAnnotationToLayer(layer,f); bindPopupForLayer(layer);
+    layer.on('dblclick', ()=> openNombreModal(L.stamp(layer)));
+  }
+
+  const currentDetectionLayers = new Map();
+
+  async function fetchJSON(url){
+    try{ const r=await fetch(url,{cache:'no-store'}); if(!r.ok) return null; const t=await r.text(); return t.trim()?JSON.parse(t):null; }
+    catch(e){ return null; }
+  }
+
+  function updateDetectionCount(){
+    const d=detectedGroup.getLayers().length, ul=userLoadedGroup.getLayers().length, ud=drawnItems.getLayers().length;
+    let t=`${d}`; const ex=[];
+    if(ul>0) ex.push(`${ul} cargadas`); if(ud>0) ex.push(`${ud} dibujadas`);
+    if(ex.length) t+=` (+${ex.join(', ')})`;
+    detectionCountEl.textContent=t;
+  }
+
+  async function loadDetections(){
+    statusEl.className='status-badge load'; statusEl.textContent='Cargando detecciones...';
+    updateBtn.classList.add('loading'); updateBtn.querySelector('span').textContent='Cargando...';
+
+    const [gjP,gjL,gjG]=await Promise.all([
+      fetchJSON('../geojson/detecciones_puntos.geojson'),
+      fetchJSON('../geojson/detecciones_lineas.geojson'),
+      fetchJSON('../geojson/detecciones_poligonos.geojson')
+    ]);
+    const feats=[];
+    if(gjP?.features) feats.push(...gjP.features);
+    if(gjL?.features) feats.push(...gjL.features);
+    if(gjG?.features) feats.push(...gjG.features);
+
+    const seen=new Set(); let nc=0;
+    for(const f of feats){
+      const key=featureKey(f); seen.add(key);
+      if(currentDetectionLayers.has(key)){
+        const lyr=currentDetectionLayers.get(key); lyr.feature=f; applyAnnotationToLayer(lyr,f); bindPopupForLayer(lyr);
+      } else {
+        nc++;
+        L.geoJSON(f,{ style:styleByProps, pointToLayer:pointToLayerFn, onEachFeature:onEachDetectionFeature }).eachLayer(sub=>{
+          currentDetectionLayers.set(key,sub); registerLayer(sub);
+          detectedGroup.addLayer(sub); allEditableLayers.addLayer(sub);
+          if(sub.setStyle){ const st=sub.options; sub.setStyle({...st,opacity:0,fillOpacity:0}); setTimeout(()=>sub.setStyle({...st,opacity:1,fillOpacity:st.fillOpacity??0.35}),100); }
+        });
+      }
+    }
+    for(const [key,lyr] of currentDetectionLayers.entries()){
+      if(!seen.has(key)){ if(lyr._isDetection){ detectedGroup.removeLayer(lyr); allEditableLayers.removeLayer(lyr); unregisterLayer(lyr); } currentDetectionLayers.delete(key); }
+    }
+    updateDetectionCount();
+    const now=new Date().toLocaleTimeString();
+    if(feats.length>0){
+      statusEl.className='status-badge ok'; statusEl.textContent=`✓ ${feats.length} detecciones (${nc} nuevas) – ${now}`;
+      if(detectedGroup.getLayers().length>0){ try{ map.fitBounds(detectedGroup.getBounds().pad(0.15),{animate:true,maxZoom:16}); }catch(e){} }
+    } else { statusEl.className='status-badge ok'; statusEl.textContent=`Sin nuevas detecciones – ${now}`; }
+    updateBtn.classList.remove('loading'); updateBtn.querySelector('span').textContent='Actualizar Detecciones';
+  }
+
+  function manualUpdate(){ if(!updateBtn.classList.contains('loading')) loadDetections(); }
+
+  /* =============================================
+     10) Imagen Georreferenciada
+     ============================================= */
+  function toggleImagePanel(){ document.getElementById('imagePanel').classList.toggle('collapsed'); }
+  function loadGeoImage(input){
+    const file=input.files[0]; if(!file||!file.type.startsWith('image/')) return;
+    const reader=new FileReader();
+    reader.onload=function(e){
+      if(currentImageOverlay) imageOverlayGroup.removeLayer(currentImageOverlay);
+      currentImageOverlay=L.imageOverlay(e.target.result,imageBounds,{opacity:1,interactive:true,zIndex:100});
+      imageOverlayGroup.addLayer(currentImageOverlay);
+      document.getElementById('imagePanel').classList.add('has-image');
+      document.getElementById('uploadArea').classList.add('has-image');
+      document.getElementById('uploadText').innerHTML='✓ Imagen cargada<br>(clic para cambiar)';
+      document.getElementById('opacityControl').classList.add('visible');
+      document.getElementById('imageActions').classList.add('visible');
+      document.getElementById('imageInfo').classList.add('visible');
+      document.getElementById('imageName').textContent=file.name.length>25?file.name.substring(0,22)+'...':file.name;
+      document.getElementById('opacitySlider').value=100;
+      document.getElementById('opacityValue').textContent='100%';
+      map.fitBounds(imageBounds,{padding:[20,20]});
+    };
+    reader.readAsDataURL(file);
+  }
+  function updateImageOpacity(v){ document.getElementById('opacityValue').textContent=v+'%'; if(currentImageOverlay) currentImageOverlay.setOpacity(v/100); }
+  function fitToImage(){ if(currentImageOverlay) map.fitBounds(imageBounds,{padding:[20,20]}); }
+  function removeGeoImage(){
+    if(currentImageOverlay){ imageOverlayGroup.removeLayer(currentImageOverlay); currentImageOverlay=null; }
+    document.getElementById('imagePanel').classList.remove('has-image');
+    document.getElementById('uploadArea').classList.remove('has-image');
+    document.getElementById('uploadText').innerHTML='Clic para cargar imagen<br>(PNG, JPG, TIFF)';
+    document.getElementById('opacityControl').classList.remove('visible');
+    document.getElementById('imageActions').classList.remove('visible');
+    document.getElementById('imageInfo').classList.remove('visible');
+    document.getElementById('imageInput').value='';
+  }
+
+  /* =============================================
+     11) ★ DINÁMICA GEOPOLIS 2026 ★
+     ============================================= */
+
+  // --- Puntos de control (La Malinche corregido) ---
+  const CONTROL_POINTS = {
+    easy: [
+      { id:'nevado',   name:'Nevado de Toluca', lat:19.1095, lng:-99.7635, hint:'TC: mancha blanca-gris al Oeste. FC: blanca sin rojo.' },
+      { id:'popo',     name:'Popocatépetl',     lat:19.0228, lng:-98.6228, hint:'TC: cima nevada brillante al SE del valle. FC: blanco intenso.' },
+      { id:'izta',     name:'Iztaccíhuatl',     lat:19.1793, lng:-98.6424, hint:'TC: silueta alargada con nieve al N del Popo. FC: blanco-azul.' },
+      { id:'malinche', name:'La Malinche',       lat:19.2312, lng:-98.0322, hint:'TC: volcán aislado al Este. FC: tonos pardos con parches de rojo.' },
+    ],
+    medium: [
+      { id:'cdmx',       name:'Ciudad de México', lat:19.4326, lng:-99.1332, hint:'TC: gran mancha gris-ocre central. FC: cian grisáceo extenso.' },
+      { id:'toluca',     name:'Toluca (centro)',  lat:19.2826, lng:-99.6557, hint:'TC: mancha gris compacta cerca del Nevado. FC: cian-gris.' },
+      { id:'puebla',     name:'Puebla',           lat:19.0414, lng:-98.2063, hint:'TC: gris-marrón al E del Popocatépetl. FC: cian rodeado de rojo.' },
+      { id:'cuernavaca', name:'Cuernavaca',        lat:18.9242, lng:-99.2216, hint:'TC: mancha gris al S del valle, rodeada de verde. FC: cian.' },
+      { id:'pachuca',    name:'Pachuca',           lat:20.1011, lng:-98.7591, hint:'TC: mancha urbana pequeña al NE. FC: gris rodeado de pardos.' },
+    ],
+    hard: [
+      { id:'texcoco',    name:'Lago de Texcoco / NAÍM',   lat:19.4424, lng:-98.9772, hint:'TC: mancha oscura-azul al NE de CDMX. FC: negro.' },
+      { id:'zempoala',   name:'Laguna de Zempoala',        lat:19.0300, lng:-99.3100, hint:'TC: pequeña mancha oscura entre montañas. FC: negro.' },
+      { id:'valsequillo', name:'Presa Valsequillo',         lat:18.9300, lng:-98.0800, hint:'TC: cuerpo de agua azul-oscuro al SE de Puebla. FC: negro.' },
+      { id:'chapultepec', name:'Bosque de Chapultepec',     lat:19.4120, lng:-99.1878, hint:'TC: mancha verde dentro de la ciudad. FC: rojo dentro del gris.' },
+      { id:'crater',     name:'Nevado de Toluca — Cráter', lat:19.1017, lng:-99.7693, hint:'TC: parche oscuro (lago) dentro de la mancha blanca.' },
+    ]
+  };
+
+  // --- Estado ---
+  const NUM_PLAYERS = 4;
+  let gameState = {
+    currentLevel: 'easy', currentPlayerIdx: 0,
+    players: [], results: {}, controlPointsShown: false
+  };
+  let buffers = { easy: 10, medium: 5, hard: 2 };
+
+  // --- Modal de inicio ---
+  function startGame(){
+    const names = [];
+    for(let i=0; i<NUM_PLAYERS; i++){
+      const val = document.getElementById(`pName${i}`).value.trim();
+      names.push(val || `Jugador ${i+1}`);
+    }
+    gameState.players = names.map(n => ({ name:n, totalScore:0, hits:0, nears:0, misses:0 }));
+    document.getElementById('startModal').remove();
+    renderPlayers();
+    renderControlPoints();
+  }
+
+  function renderPlayers(){
+    const grid=document.getElementById('playersGrid'); grid.innerHTML='';
+    gameState.players.forEach((p,i) => {
+      const card=document.createElement('div');
+      card.className='player-card'+(i===gameState.currentPlayerIdx?' active-player':'');
+      card.onclick=()=>{ gameState.currentPlayerIdx=i; renderPlayers(); renderControlPoints(); };
+      card.innerHTML=`<div class="p-name">${p.name}</div><div class="p-score">${p.totalScore}</div><div class="p-detail">${p.hits}✓ ${p.nears}◎ ${p.misses}✗</div>`;
+      grid.appendChild(card);
+    });
+  }
+
+  function nextPlayer(){
+    gameState.currentPlayerIdx=(gameState.currentPlayerIdx+1)%NUM_PLAYERS;
+    renderPlayers(); renderControlPoints();
+  }
+
+  // --- Niveles ---
+  function selectLevel(level){
+    gameState.currentLevel=level; gameState.controlPointsShown=false;
+    document.querySelectorAll('.level-tab').forEach(tab=>{
+      tab.className='level-tab';
+      if(tab.dataset.level===level) tab.classList.add(level==='easy'?'active-easy':level==='medium'?'active-medium':'active-hard');
+    });
+    renderControlPoints(); clearGameLayers();
+  }
+
+  function updateBuffers(){
+    buffers.easy=parseFloat(document.getElementById('bufferEasy').value)||10;
+    buffers.medium=parseFloat(document.getElementById('bufferMedium').value)||5;
+    buffers.hard=parseFloat(document.getElementById('bufferHard').value)||2;
+  }
+
+  // --- Lista puntos de control ---
+  function renderControlPoints(){
+    const list=document.getElementById('controlPointsList'); list.innerHTML='';
+    const points=CONTROL_POINTS[gameState.currentLevel]||[];
+    const pi=gameState.currentPlayerIdx;
+    points.forEach(cp=>{
+      const res=gameState.results[`${cp.id}_${pi}`];
+      let sc='pending', st='—';
+      if(res){
+        sc=res.status;
+        st=res.status==='hit'?`✓ +${res.score} (${res.distance.toFixed(1)}km)`:
+           res.status==='near'?`◎ +${res.score} (${res.distance.toFixed(1)}km)`:
+           `✗ +${res.score} (${res.distance.toFixed(1)}km)`;
+      }
+      const item=document.createElement('div'); item.className='control-point-item'; item.title=cp.hint;
+      item.innerHTML=`<span class="cp-name">${cp.name}</span><span class="cp-status ${sc}">${st}</span>`;
+      list.appendChild(item);
+    });
+  }
+
+  // --- Mostrar puntos (preview sin resultado) ---
+  function showControlPoints(){
+    clearGameLayers();
+    gameState.controlPointsShown=!gameState.controlPointsShown;
+    if(!gameState.controlPointsShown) return;
+    const points=CONTROL_POINTS[gameState.currentLevel]||[];
+    const bkm=buffers[gameState.currentLevel];
+    const lcol={easy:'#00e676',medium:'#ffab40',hard:'#ff5252'};
+    const col=lcol[gameState.currentLevel];
+    points.forEach(cp=>{
+      const icon=L.divIcon({ className:'target-marker-icon', html:`<div class="target-ring" style="border-color:${col};"></div>`, iconSize:[22,22], iconAnchor:[11,11] });
+      L.marker([cp.lat,cp.lng],{icon}).bindTooltip(cp.name,{permanent:true,direction:'top',offset:[0,-12]}).addTo(gameTargetsGroup);
+      L.circle([cp.lat,cp.lng],{ radius:bkm*1000, color:col, weight:1.5, dashArray:'6,4', fillColor:col, fillOpacity:0.06, interactive:false }).addTo(gameBufferGroup);
+    });
+  }
+
+  function clearGameLayers(){ gameTargetsGroup.clearLayers(); gameBufferGroup.clearLayers(); }
+
+  // --- ★ VERIFICAR — muestra buffers verdes/rojos ★ ---
+  function checkDetections(){
+    const detections=[];
+    detectedGroup.eachLayer(layer=>{
+      const f=layer.feature; if(!f||!f.geometry) return;
+      let lat,lng;
+      if(f.geometry.type==='Point'){ lat=f.geometry.coordinates[1]; lng=f.geometry.coordinates[0]; }
+      else { try{ const c=turf.centroid(f); lng=c.geometry.coordinates[0]; lat=c.geometry.coordinates[1]; }catch(e){ return; } }
+      detections.push({lat,lng,feature:f});
+    });
+
+    if(detections.length===0){
+      statusEl.className='status-badge err';
+      statusEl.textContent='⚠ No hay detecciones. Presiona "Actualizar Detecciones" primero.';
+      return;
+    }
+
+    const points=CONTROL_POINTS[gameState.currentLevel]||[];
+    const bkm=buffers[gameState.currentLevel];
+    const pi=gameState.currentPlayerIdx;
+    const player=gameState.players[pi];
+    let totalNew=0;
+
+    // Limpiar capas de juego para redibujar con colores de resultado
+    clearGameLayers();
+
+    points.forEach(cp=>{
+      const key=`${cp.id}_${pi}`;
+      let res=gameState.results[key];
+
+      // Calcular si no se ha evaluado aún
+      if(!res){
+        let minD=Infinity;
+        detections.forEach(det=>{
+          const d=turf.distance(turf.point([det.lng,det.lat]),turf.point([cp.lng,cp.lat]),{units:'kilometers'});
+          if(d<minD) minD=d;
+        });
+        let score=0, status='miss';
+        if(minD<=bkm){
+          score=Math.round(100*(1-minD/bkm)+50); status='hit'; player.hits++;
+        } else if(minD<=bkm*2){
+          score=Math.round(30*(1-(minD-bkm)/bkm)+10); status='near'; player.nears++;
+        } else {
+          score=Math.max(0,Math.round(10-minD/10)); status='miss'; player.misses++;
+        }
+        res={distance:minD,score,status};
+        gameState.results[key]=res;
+        totalNew+=score;
+      }
+
+      // ★ Dibujar el punto y buffer con color según resultado ★
+      const isHit = res.status==='hit';
+      const isNear = res.status==='near';
+      const ringColor = isHit ? '#00e676' : isNear ? '#ffab40' : '#ff5252';
+      const bufferColor = isHit ? '#00e676' : '#ff5252';
+
+      // Marcador del punto real
+      const icon=L.divIcon({
+        className:'target-marker-icon',
+        html:`<div class="target-ring no-pulse" style="border-color:${ringColor}; background:${ringColor}33;"></div>`,
+        iconSize:[22,22], iconAnchor:[11,11]
+      });
+      L.marker([cp.lat,cp.lng],{icon})
+        .bindTooltip(`${cp.name}<br><span style="color:${ringColor};font-weight:bold;">${res.distance.toFixed(1)} km — ${res.status==='hit'?'DENTRO':res.status==='near'?'CERCA':'FUERA'}</span>`,
+          {permanent:true,direction:'top',offset:[0,-12]})
+        .addTo(gameTargetsGroup);
+
+      // Buffer con color verde (dentro) o rojo (fuera)
+      L.circle([cp.lat,cp.lng],{
+        radius:bkm*1000,
+        color:bufferColor, weight:2,
+        fillColor:bufferColor,
+        fillOpacity: isHit ? 0.12 : 0.08,
+        interactive:false
+      }).addTo(gameBufferGroup);
+
+      // Línea de conexión al punto detectado más cercano
+      let bestDet=null, minD2=Infinity;
+      detections.forEach(det=>{
+        const d=turf.distance(turf.point([det.lng,det.lat]),turf.point([cp.lng,cp.lat]),{units:'kilometers'});
+        if(d<minD2){ minD2=d; bestDet=det; }
+      });
+      if(bestDet){
+        L.polyline([[bestDet.lat,bestDet.lng],[cp.lat,cp.lng]],{
+          color:ringColor, weight:2, dashArray:'4,6', opacity:0.7, interactive:false
+        }).addTo(gameBufferGroup);
+      }
+    });
+
+    if(totalNew>0) player.totalScore+=totalNew;
+
+    renderPlayers(); renderControlPoints();
+    showResultToast(totalNew, points.length, pi);
+  }
+
+  function showResultToast(score, numPts, pi){
+    const p=gameState.players[pi];
+    const cls = score>numPts*80?'hit-toast':score>numPts*20?'near-toast':'miss-toast';
+    const ico = score>numPts*80?'🎯':score>numPts*20?'👀':'📍';
+    const t=document.createElement('div'); t.className=`result-toast ${cls}`;
+    t.innerHTML=`<div class="toast-icon">${ico}</div><div class="toast-msg">${p.name}: +${score} pts</div><div class="toast-detail">Total: ${p.totalScore} pts</div>`;
+    document.body.appendChild(t);
+    setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity 0.5s'; },2500);
+    setTimeout(()=>t.remove(),3000);
+  }
+
+  // --- Marcador final ---
+  function showScoreboard(){
+    const sorted=[...gameState.players].sort((a,b)=>b.totalScore-a.totalScore);
+    const emojis=['🥇','🥈','🥉','4️⃣'];
+    let rows='';
+    sorted.forEach((p,i)=>{ rows+=`<div class="sb-row ${i===0?'winner':''}"><span class="sb-rank">${emojis[i]||i+1}</span><span class="sb-name">${p.name}</span><span class="sb-pts">${p.totalScore}</span></div>`; });
+    const ov=document.createElement('div'); ov.className='scoreboard-overlay'; ov.id='scoreboardOverlay';
+    ov.innerHTML=`<div class="scoreboard-card"><h2>🏆 Marcador Final</h2><div class="sb-subtitle">Geopolis 2026 — "Nuestros Ojos en el Cielo"</div>${rows}<button class="sb-close-btn" onclick="document.getElementById('scoreboardOverlay').remove()">Cerrar</button></div>`;
+    document.body.appendChild(ov);
+  }
+
+  // --- Reiniciar ---
+  function resetGame(){
+    if(!confirm('¿Reiniciar toda la dinámica? Se perderán los puntajes.')) return;
+    gameState.results={}; gameState.currentPlayerIdx=0; gameState.controlPointsShown=false;
+    gameState.players.forEach(p=>{ p.totalScore=0; p.hits=0; p.nears=0; p.misses=0; });
+    clearGameLayers(); renderPlayers(); renderControlPoints();
+  }
+
+  function toggleGamePanel(){ document.getElementById('gamePanel').classList.toggle('collapsed'); }
+
+  /* =============================================
+     INIT
+     ============================================= */
+  // No inicializar jugadores aún — el modal de inicio lo hace
+  selectLevel('easy');
+  map.fitBounds(L.latLngBounds([areaBounds[0], areaBounds[2]]), { padding: [40, 40] });
+
+  </script>
+</body>
+</html>
