@@ -542,9 +542,9 @@
       <div class="game-section">
         <div class="game-section-title">Acciones</div>
         <div class="game-actions">
-          <button class="game-btn game-btn-primary" onclick="checkDetections()"><i class="fas fa-crosshairs"></i> Verificar</button>
+          <button class="game-btn game-btn-primary" onclick="checkDetections()"><i class="fas fa-crosshairs"></i> Verificar Ronda</button>
           <button class="game-btn game-btn-show" onclick="showControlPoints()"><i class="fas fa-eye"></i> Mostrar</button>
-          <button class="game-btn game-btn-secondary" onclick="nextPlayer()"><i class="fas fa-user-friends"></i> Siguiente</button>
+          <button class="game-btn game-btn-secondary" onclick="nextLevel()"><i class="fas fa-arrow-right"></i> Sig. Nivel</button>
           <button class="game-btn game-btn-secondary" onclick="showScoreboard()"><i class="fas fa-trophy"></i> Marcador</button>
           <button class="game-btn game-btn-danger" onclick="resetGame()"><i class="fas fa-redo"></i> Reiniciar</button>
         </div>
@@ -1149,8 +1149,8 @@
   // --- Estado ---
   const NUM_PLAYERS = 4;
   let gameState = {
-    currentLevel: 'easy', currentPlayerIdx: 0,
-    players: [], results: {}, controlPointsShown: false
+    currentLevel: 'easy',
+    players: [], results: {}, controlPointsShown: false, roundVerified: false
   };
   let buffers = { easy: 10, medium: 5, hard: 2 };
 
@@ -1161,7 +1161,7 @@
       const val = document.getElementById(`pName${i}`).value.trim();
       names.push(val || `Jugador ${i+1}`);
     }
-    gameState.players = names.map(n => ({ name:n, totalScore:0, hits:0, nears:0, misses:0 }));
+    gameState.players = names.map(n => ({ name:n, totalScore:0, hits:0, misses:0 }));
     document.getElementById('startModal').remove();
     renderPlayers();
     renderControlPoints();
@@ -1171,21 +1171,27 @@
     const grid=document.getElementById('playersGrid'); grid.innerHTML='';
     gameState.players.forEach((p,i) => {
       const card=document.createElement('div');
-      card.className='player-card'+(i===gameState.currentPlayerIdx?' active-player':'');
-      card.onclick=()=>{ gameState.currentPlayerIdx=i; renderPlayers(); renderControlPoints(); };
-      card.innerHTML=`<div class="p-name">${p.name}</div><div class="p-score">${p.totalScore}</div><div class="p-detail">${p.hits}✓ ${p.nears}◎ ${p.misses}✗</div>`;
+      card.className='player-card';
+      card.innerHTML=`<div class="p-name">${p.name}</div><div class="p-score">${p.totalScore}</div><div class="p-detail">${p.hits}✓ ${p.misses}✗</div>`;
       grid.appendChild(card);
     });
   }
 
-  function nextPlayer(){
-    gameState.currentPlayerIdx=(gameState.currentPlayerIdx+1)%NUM_PLAYERS;
-    renderPlayers(); renderControlPoints();
+  // --- Avanzar nivel ---
+  function nextLevel(){
+    const levels = ['easy','medium','hard'];
+    const idx = levels.indexOf(gameState.currentLevel);
+    if(idx < levels.length - 1){
+      selectLevel(levels[idx + 1]);
+    } else {
+      showScoreboard();
+    }
   }
 
   // --- Niveles ---
   function selectLevel(level){
     gameState.currentLevel=level; gameState.controlPointsShown=false;
+    gameState.roundVerified=false;
     document.querySelectorAll('.level-tab').forEach(tab=>{
       tab.className='level-tab';
       if(tab.dataset.level===level) tab.classList.add(level==='easy'?'active-easy':level==='medium'?'active-medium':'active-hard');
@@ -1199,19 +1205,35 @@
     buffers.hard=parseFloat(document.getElementById('bufferHard').value)||2;
   }
 
-  // --- Lista puntos de control ---
+  // --- Asignación de puntos a jugadores (round-robin) ---
+  function getPlayerAssignment(){
+    const points=CONTROL_POINTS[gameState.currentLevel]||[];
+    const assignment={}; // {pointIndex: playerIndex}
+    for(let i=0; i<points.length; i++){
+      assignment[i] = i % NUM_PLAYERS;
+    }
+    return assignment;
+  }
+
+  // --- Lista puntos de control con asignación de jugador ---
   function renderControlPoints(){
     const list=document.getElementById('controlPointsList'); list.innerHTML='';
     const points=CONTROL_POINTS[gameState.currentLevel]||[];
-    const pi=gameState.currentPlayerIdx;
-    points.forEach(cp=>{
-      const res=gameState.results[`${cp.id}_${pi}`];
-      let sc='pending', st='—';
+    const assignment=getPlayerAssignment();
+
+    points.forEach((cp, idx)=>{
+      const pi=assignment[idx];
+      const playerName=gameState.players[pi]?.name || `J${pi+1}`;
+      const key=`${cp.id}_${gameState.currentLevel}`;
+      const res=gameState.results[key];
+      let sc='pending', st=`→ ${playerName}`;
       if(res){
         sc=res.status;
-        st=res.status==='hit'?`✓ +${res.score} (${res.distance.toFixed(1)}km)`:
-           res.status==='near'?`◎ +${res.score} (${res.distance.toFixed(1)}km)`:
-           `✗ +${res.score} (${res.distance.toFixed(1)}km)`;
+        if(res.status==='hit'){
+          st=`✓ +${res.score} (${res.distance.toFixed(1)}km) — ${playerName}`;
+        } else {
+          st=`✗ fuera (${res.distance.toFixed(1)}km) — ${playerName}`;
+        }
       }
       const item=document.createElement('div'); item.className='control-point-item'; item.title=cp.hint;
       item.innerHTML=`<span class="cp-name">${cp.name}</span><span class="cp-status ${sc}">${st}</span>`;
@@ -1228,16 +1250,19 @@
     const bkm=buffers[gameState.currentLevel];
     const lcol={easy:'#00e676',medium:'#ffab40',hard:'#ff5252'};
     const col=lcol[gameState.currentLevel];
-    points.forEach(cp=>{
+    const assignment=getPlayerAssignment();
+    points.forEach((cp, idx)=>{
+      const pi=assignment[idx];
+      const pName=gameState.players[pi]?.name || `J${pi+1}`;
       const icon=L.divIcon({ className:'target-marker-icon', html:`<div class="target-ring" style="border-color:${col};"></div>`, iconSize:[22,22], iconAnchor:[11,11] });
-      L.marker([cp.lat,cp.lng],{icon}).bindTooltip(cp.name,{permanent:true,direction:'top',offset:[0,-12]}).addTo(gameTargetsGroup);
+      L.marker([cp.lat,cp.lng],{icon}).bindTooltip(`${cp.name}<br><b>${pName}</b>`,{permanent:true,direction:'top',offset:[0,-12]}).addTo(gameTargetsGroup);
       L.circle([cp.lat,cp.lng],{ radius:bkm*1000, color:col, weight:1.5, dashArray:'6,4', fillColor:col, fillOpacity:0.06, interactive:false }).addTo(gameBufferGroup);
     });
   }
 
   function clearGameLayers(){ gameTargetsGroup.clearLayers(); gameBufferGroup.clearLayers(); }
 
-  // --- ★ VERIFICAR — muestra buffers verdes/rojos ★ ---
+  // --- ★ VERIFICAR RONDA — evalúa todos los jugadores a la vez ★ ---
   function checkDetections(){
     const detections=[];
     detectedGroup.eachLayer(layer=>{
@@ -1256,91 +1281,96 @@
 
     const points=CONTROL_POINTS[gameState.currentLevel]||[];
     const bkm=buffers[gameState.currentLevel];
-    const pi=gameState.currentPlayerIdx;
-    const player=gameState.players[pi];
-    let totalNew=0;
+    const assignment=getPlayerAssignment();
 
-    // Limpiar capas de juego para redibujar con colores de resultado
+    // Limpiar capas de juego
     clearGameLayers();
 
-    points.forEach(cp=>{
-      const key=`${cp.id}_${pi}`;
-      let res=gameState.results[key];
+    let roundTotalScore=0;
+    const playerScoresThisRound=new Array(NUM_PLAYERS).fill(0);
 
-      // Calcular si no se ha evaluado aún
-      if(!res){
-        let minD=Infinity;
-        detections.forEach(det=>{
-          const d=turf.distance(turf.point([det.lng,det.lat]),turf.point([cp.lng,cp.lat]),{units:'kilometers'});
-          if(d<minD) minD=d;
-        });
-        let score=0, status='miss';
-        if(minD<=bkm){
-          score=Math.round(100*(1-minD/bkm)+50); status='hit'; player.hits++;
-        } else if(minD<=bkm*2){
-          score=Math.round(30*(1-(minD-bkm)/bkm)+10); status='near'; player.nears++;
-        } else {
-          score=Math.max(0,Math.round(10-minD/10)); status='miss'; player.misses++;
-        }
-        res={distance:minD,score,status};
-        gameState.results[key]=res;
-        totalNew+=score;
-      }
+    points.forEach((cp, idx)=>{
+      const pi=assignment[idx];
+      const player=gameState.players[pi];
+      if(!player) return;
+      const key=`${cp.id}_${gameState.currentLevel}`;
 
-      // ★ Dibujar el punto y buffer con color según resultado ★
-      const isHit = res.status==='hit';
-      const isNear = res.status==='near';
-      const ringColor = isHit ? '#00e676' : isNear ? '#ffab40' : '#ff5252';
-      const bufferColor = isHit ? '#00e676' : '#ff5252';
+      // No re-evaluar si ya se verificó
+      if(gameState.results[key]) return;
 
-      // Marcador del punto real
-      const icon=L.divIcon({
-        className:'target-marker-icon',
-        html:`<div class="target-ring no-pulse" style="border-color:${ringColor}; background:${ringColor}33;"></div>`,
-        iconSize:[22,22], iconAnchor:[11,11]
-      });
-      L.marker([cp.lat,cp.lng],{icon})
-        .bindTooltip(`${cp.name}<br><span style="color:${ringColor};font-weight:bold;">${res.distance.toFixed(1)} km — ${res.status==='hit'?'DENTRO':res.status==='near'?'CERCA':'FUERA'}</span>`,
-          {permanent:true,direction:'top',offset:[0,-12]})
-        .addTo(gameTargetsGroup);
-
-      // Buffer con color verde (dentro) o rojo (fuera)
-      L.circle([cp.lat,cp.lng],{
-        radius:bkm*1000,
-        color:bufferColor, weight:2,
-        fillColor:bufferColor,
-        fillOpacity: isHit ? 0.12 : 0.08,
-        interactive:false
-      }).addTo(gameBufferGroup);
-
-      // Línea de conexión al punto detectado más cercano
-      let bestDet=null, minD2=Infinity;
+      // Encontrar detección más cercana
+      let minD=Infinity;
+      let bestDet=null;
       detections.forEach(det=>{
         const d=turf.distance(turf.point([det.lng,det.lat]),turf.point([cp.lng,cp.lat]),{units:'kilometers'});
-        if(d<minD2){ minD2=d; bestDet=det; }
+        if(d<minD){ minD=d; bestDet=det; }
       });
-      if(bestDet){
-        L.polyline([[bestDet.lat,bestDet.lng],[cp.lat,cp.lng]],{
-          color:ringColor, weight:2, dashArray:'4,6', opacity:0.7, interactive:false
+
+      let score=0, status='miss';
+      if(minD<=bkm){
+        const ratio=1-(minD/bkm);
+        score=Math.round(100*ratio+50); // 50-150 pts
+        status='hit';
+        player.hits++;
+      } else {
+        score=0;
+        status='miss';
+        player.misses++;
+      }
+
+      gameState.results[key]={distance:minD,score,status,playerIdx:pi};
+      player.totalScore+=score;
+      playerScoresThisRound[pi]+=score;
+      roundTotalScore+=score;
+
+      // ★ Solo dibujar en el mapa si cayó DENTRO del buffer ★
+      if(status==='hit'){
+        const icon=L.divIcon({
+          className:'target-marker-icon',
+          html:`<div class="target-ring no-pulse" style="border-color:#00e676; background:#00e67633;"></div>`,
+          iconSize:[22,22], iconAnchor:[11,11]
+        });
+        L.marker([cp.lat,cp.lng],{icon})
+          .bindTooltip(`${cp.name} ✓<br><b>${player.name}: +${score} pts</b><br>${minD.toFixed(1)} km`,
+            {permanent:true,direction:'top',offset:[0,-12]})
+          .addTo(gameTargetsGroup);
+
+        L.circle([cp.lat,cp.lng],{
+          radius:bkm*1000, color:'#00e676', weight:2,
+          fillColor:'#00e676', fillOpacity:0.12, interactive:false
         }).addTo(gameBufferGroup);
+
+        // Línea de conexión
+        if(bestDet){
+          L.polyline([[bestDet.lat,bestDet.lng],[cp.lat,cp.lng]],{
+            color:'#00e676', weight:2, dashArray:'4,6', opacity:0.7, interactive:false
+          }).addTo(gameBufferGroup);
+        }
       }
     });
 
-    if(totalNew>0) player.totalScore+=totalNew;
-
+    gameState.roundVerified=true;
     renderPlayers(); renderControlPoints();
-    showResultToast(totalNew, points.length, pi);
+
+    // Toast con resumen de la ronda
+    showRoundToast(playerScoresThisRound, roundTotalScore);
   }
 
-  function showResultToast(score, numPts, pi){
-    const p=gameState.players[pi];
-    const cls = score>numPts*80?'hit-toast':score>numPts*20?'near-toast':'miss-toast';
-    const ico = score>numPts*80?'🎯':score>numPts*20?'👀':'📍';
+  function showRoundToast(playerScores, total){
+    const cls = total > 0 ? 'hit-toast' : 'miss-toast';
+    const ico = total > 0 ? '🎯' : '😅';
+    let lines = '';
+    gameState.players.forEach((p, i) => {
+      if(playerScores[i] > 0) lines += `<div style="font-size:13px;">${p.name}: +${playerScores[i]}</div>`;
+    });
+    if(!lines) lines = '<div style="font-size:13px;">Ningún acierto en esta ronda</div>';
+
+    const levelNames = {easy:'Fácil',medium:'Medio',hard:'Difícil'};
     const t=document.createElement('div'); t.className=`result-toast ${cls}`;
-    t.innerHTML=`<div class="toast-icon">${ico}</div><div class="toast-msg">${p.name}: +${score} pts</div><div class="toast-detail">Total: ${p.totalScore} pts</div>`;
+    t.innerHTML=`<div class="toast-icon">${ico}</div><div class="toast-msg">Ronda ${levelNames[gameState.currentLevel]}</div>${lines}<div class="toast-detail">Total ronda: ${total} pts</div>`;
     document.body.appendChild(t);
-    setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity 0.5s'; },2500);
-    setTimeout(()=>t.remove(),3000);
+    setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity 0.5s'; },3500);
+    setTimeout(()=>t.remove(),4000);
   }
 
   // --- Marcador final ---
@@ -1357,9 +1387,9 @@
   // --- Reiniciar ---
   function resetGame(){
     if(!confirm('¿Reiniciar toda la dinámica? Se perderán los puntajes.')) return;
-    gameState.results={}; gameState.currentPlayerIdx=0; gameState.controlPointsShown=false;
-    gameState.players.forEach(p=>{ p.totalScore=0; p.hits=0; p.nears=0; p.misses=0; });
-    clearGameLayers(); renderPlayers(); renderControlPoints();
+    gameState.results={}; gameState.controlPointsShown=false; gameState.roundVerified=false;
+    gameState.players.forEach(p=>{ p.totalScore=0; p.hits=0; p.misses=0; });
+    clearGameLayers(); selectLevel('easy'); renderPlayers(); renderControlPoints();
   }
 
   function toggleGamePanel(){ document.getElementById('gamePanel').classList.toggle('collapsed'); }
