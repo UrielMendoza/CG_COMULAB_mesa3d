@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Detector Geopolis 2026 – v2.1 (CORREGIDO: Homografía)
+Detector Geopolis 2026 – v2 (cruces AZULES + plastilina verde)
 
-Cambios v2.1:
-- Corrección en el orden de las esquinas (TR y BL estaban invertidos).
-- Cruces de calibración son AZULES.
-- Solo detecta plastilina VERDE como puntos para el GeoJSON.
+Cambios v2:
+- Cruces de calibración son AZULES
+- Las cruces se detectan EN CADA FRAME y se dibujan en el video para feedback visual
+- Las cruces solo se usan para homografía al presionar "Recalibrar"
+- Las cruces NO se guardan en GeoJSON (solo se mapean puntos verdes)
+- Solo detecta plastilina VERDE como puntos
+- Diseñado para imágenes satelitales impresas (true color / falso color)
 """
 
 import cv2
@@ -36,17 +39,19 @@ DEFAULT_VIDEO_FILE = "./Mesa3D/20250327_130515_referencia.mp4"
 DEFAULT_VIDEO_SPEED_MS = 25
 DEFAULT_SHOW_MODE = 1
 DEFAULT_SCALE = 1.0
-DEFAULT_RECALIB_EVERY = 0 
+DEFAULT_RECALIB_EVERY = 0  # manual
 
 DEFAULT_PARAMS = {
     "MIN_AREA": 8,
     "MAX_AREA": 8000,
+    # Plastilina verde
     "GREEN_H_LOW": 35,
     "GREEN_H_HIGH": 85,
     "GREEN_S_LOW": 50,
     "GREEN_S_HIGH": 255,
     "GREEN_V_LOW": 50,
     "GREEN_V_HIGH": 255,
+    # Cruces AZULES
     "BLUE_H_LOW": 85,
     "BLUE_H_HIGH": 135,
     "BLUE_S_LOW": 50,
@@ -62,7 +67,12 @@ def init_transformer(epsg_src=32614, epsg_dst=4326):
 
 def find_blue_cross_corners(frame, params):
     """
-    Detecta las 4 cruces AZULES y las ordena correctamente.
+    Detecta las 4 cruces AZULES en las esquinas.
+    Retorna: corners, crop_box, centroids_all, debug_dict
+    - corners: 4 esquinas ordenadas (o None)
+    - crop_box: bounding box (o None)
+    - centroids_all: TODOS los centroides encontrados (para dibujar en video)
+    - debug_dict: máscara para debug
     """
     blurred = cv2.GaussianBlur(frame, (5, 5), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
@@ -79,7 +89,12 @@ def find_blue_cross_corners(frame, params):
     centroids = []
     for c in contours:
         area = cv2.contourArea(c)
-        if area < 15: continue
+        if area < 15:
+            continue
+        x, y, w, h = cv2.boundingRect(c)
+        ar = w / h if h > 0 else 0
+        if ar < 0.2 or ar > 5.0:
+            continue
         M = cv2.moments(c)
         if M["m00"] > 0:
             cx = M["m10"] / M["m00"]
@@ -90,20 +105,12 @@ def find_blue_cross_corners(frame, params):
         return None, None, centroids, {"mask_blue": mask}
 
     pts = np.array(centroids, dtype=np.float32)
-    
-    # ORDENAMIENTO DE PUNTOS (CORREGIDO)
-    # s = x + y -> El mínimo es TL, el máximo es BR
     s = pts.sum(axis=1)
+    d = np.diff(pts, axis=1).ravel()
     tl = pts[np.argmin(s)]
     br = pts[np.argmax(s)]
-
-    # d = y - x -> 
-    # TR: x grande, y pequeño -> y-x es el valor más negativo (MÍNIMO)
-    # BL: x pequeño, y grande -> y-x es el valor más positivo (MÁXIMO)
-    d = np.diff(pts, axis=1).ravel()
-    tr = pts[np.argmin(d)] # <-- CORRECCIÓN: Antes era argmax
-    bl = pts[np.argmax(d)] # <-- CORRECCIÓN: Antes era argmin
-    
+    tr = pts[np.argmax(d)]
+    bl = pts[np.argmin(d)]
     corners = np.array([tl, tr, br, bl], dtype=np.float32)
 
     xs = corners[:, 0]
@@ -120,12 +127,11 @@ def find_blue_cross_corners(frame, params):
 
 def compute_homography_from_corners(corners_img, geo_bounds_utm):
     xmin, ymin, xmax, ymax = geo_bounds_utm
-    # Mapeo: TL->NW, TR->NE, BR->SE, BL->SW
     dst_pts = np.array([
-        [xmin, ymax],
-        [xmax, ymax],
-        [xmax, ymin],
-        [xmin, ymin],
+        [xmin, ymax],  # TL -> NW
+        [xmax, ymax],  # TR -> NE
+        [xmax, ymin],  # BR -> SE
+        [xmin, ymin],  # BL -> SW
     ], dtype=np.float32)
     H, _ = cv2.findHomography(corners_img, dst_pts, method=cv2.RANSAC)
     return H
@@ -145,7 +151,8 @@ def draw_small(window_name, frame, scale):
 def guardar_geojson_puntos(detections, nombre):
     features = []
     for d in detections:
-        if d['geometry'] is None: continue
+        if d['geometry'] is None:
+            continue
         features.append({
             "type": "Feature",
             "properties": {"color": "green", "type": "point"},
@@ -158,152 +165,525 @@ def guardar_geojson_puntos(detections, nombre):
         except Exception as e:
             print(f"[WARN] No se pudo escribir {nombre}: {e}")
 
-# ================== Pipeline y Clases de Control ==================
+# ================== Pipeline ==================
 
 class LiveParams:
     def __init__(self, init_dict):
         self._lock = threading.Lock()
         self._d = dict(init_dict)
     def update(self, **kwargs):
-        with self._lock: self._d.update(kwargs)
+        with self._lock:
+            self._d.update(kwargs)
     def get(self):
-        with self._lock: return dict(self._d)
+        with self._lock:
+            return dict(self._d)
 
 def detect_green_points(frame_in, transformer, H, xoff, yoff, show_mode, scale, params):
+    """Detecta solo plastilina VERDE como puntos."""
     detections = []
+
     blurred = cv2.GaussianBlur(frame_in, (5, 5), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+
     lower = np.array([params["GREEN_H_LOW"], params["GREEN_S_LOW"], params["GREEN_V_LOW"]], dtype=np.uint8)
     upper = np.array([params["GREEN_H_HIGH"], params["GREEN_S_HIGH"], params["GREEN_V_HIGH"]], dtype=np.uint8)
     mask = cv2.inRange(hsv, lower, upper)
+
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     count = 0
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < params["MIN_AREA"] or area > params["MAX_AREA"]: continue
+        if area < params["MIN_AREA"] or area > params["MAX_AREA"]:
+            continue
         M = cv2.moments(contour)
-        if M["m00"] == 0: continue
-        cx, cy = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
+        if M["m00"] == 0:
+            continue
+        cx = int(M["m10"] / M["m00"])
+        cy = int(M["m01"] / M["m00"])
+
         geometry = None
         if H is not None:
             try:
                 lonlat = raster_to_geo(cx + xoff, cy + yoff, H, transformer)
-                if lonlat: geometry = Point(lonlat)
-            except: pass
+                if lonlat:
+                    geometry = Point(lonlat)
+            except Exception:
+                pass
+
         count += 1
         detections.append({"geometry": geometry, "color": "green", "type": "point"})
+
         if show_mode >= 1:
             cv2.circle(frame_in, (cx, cy), 7, (0, 255, 0), 2)
-            cv2.putText(frame_in, str(count), (cx + 10, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            cv2.circle(frame_in, (cx, cy), 2, (0, 255, 0), -1)
+            cv2.putText(frame_in, str(count), (cx + 10, cy - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+
     if show_mode == 2:
         draw_small("Mascara Verde", cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR), scale)
+
     return detections, count
+
+def list_available_cameras(max_test=10):
+    available = []
+    for i in range(max_test):
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            ret, _ = cap.read()
+            if ret:
+                available.append(i)
+            cap.release()
+    return available
 
 def run_pipeline(video_source, src_type, geo_bounds_utm, epsg_src,
                  show_mode, scale, video_speed, recalib_every,
-                 live_params, pause_event, recalib_event, stop_event):
+                 live_params: LiveParams,
+                 pause_event: threading.Event,
+                 recalib_event: threading.Event,
+                 stop_event: threading.Event):
+
     os.makedirs('geojson', exist_ok=True)
     transformer = init_transformer(epsg_src)
-    cap = cv2.VideoCapture(int(video_source) if src_type == 'camera' else video_source)
-    H, crop_box, frame_count = None, None, 0
+
+    if src_type == 'camera':
+        cap = cv2.VideoCapture(int(video_source))
+    else:
+        cap = cv2.VideoCapture(video_source)
+
+    if not cap.isOpened():
+        messagebox.showerror("Error", f"No se pudo abrir: {video_source}")
+        return
+
+    H = None
+    crop_box = None
+    frame_count = 0
 
     try:
         while not stop_event.is_set():
             ret, frame = cap.read()
-            if not ret: break
+            if not ret:
+                if src_type in ('camera', 'url'):
+                    cap.release()
+                    cap = cv2.VideoCapture(int(video_source) if src_type == 'camera' else video_source)
+                    continue
+                break
             frame_count += 1
             params_now = live_params.get()
-            corners, crop_candidate, all_centroids, dbg = find_blue_cross_corners(frame, params_now)
-            
-            if recalib_event.is_set() or (recalib_every > 0 and frame_count % recalib_every == 0):
-                recalib_event.clear()
-                if corners is not None:
-                    H = compute_homography_from_corners(corners, geo_bounds_utm)
-                    crop_box = crop_candidate
 
+            # ======================================================
+            # SIEMPRE detectar cruces azules para feedback visual
+            # (pero NO actualizar homografía a menos que se recalibre)
+            # ======================================================
+            corners, crop_candidate, all_centroids, dbg = find_blue_cross_corners(frame, params_now)
+            num_crosses_found = len(all_centroids)
+
+            # Mostrar máscara azul en modo debug
+            if show_mode == 2 and "mask_blue" in dbg:
+                draw_small("Mascara Azul (cruces)", cv2.cvtColor(dbg["mask_blue"], cv2.COLOR_GRAY2BGR), scale)
+
+            # ======================================================
+            # Recalibración: solo cuando se pide (botón o cada N frames)
+            # ======================================================
+            need_recalib = False
+            if recalib_every > 0 and (frame_count % recalib_every == 0):
+                need_recalib = True
+            if recalib_event.is_set():
+                need_recalib = True
+                recalib_event.clear()
+
+            if need_recalib:
+                if corners is not None and crop_candidate is not None:
+                    H2 = compute_homography_from_corners(corners, geo_bounds_utm)
+                    if H2 is not None:
+                        H = H2
+                        crop_box = crop_candidate
+                        if show_mode >= 1:
+                            print(f"[OK] Calibración exitosa — 4 cruces detectadas, homografía actualizada.")
+                else:
+                    if show_mode >= 1:
+                        print(f"[INFO] No se detectaron 4 cruces azules ({num_crosses_found} encontradas). Calibración no actualizada.")
+
+            # ======================================================
+            # Frame de entrada (recortado si hay calibración)
+            # ======================================================
             if H is not None and crop_box is not None:
                 xmin, ymin, xmax, ymax = crop_box
                 frame_in = frame[ymin:ymax, xmin:xmax].copy()
-                xoff, yoff, calibrated = xmin, ymin, True
+                xoff, yoff = xmin, ymin
+                calibrated = True
             else:
-                frame_in, xoff, yoff, calibrated = frame.copy(), 0, 0, False
+                frame_in = frame.copy()
+                xoff, yoff = 0, 0
+                calibrated = False
 
+            # Pausa
             if pause_event.is_set():
-                if cv2.waitKey(video_speed) & 0xFF == ord('q'): break
+                if show_mode >= 1:
+                    overlay = frame_in.copy()
+                    cv2.putText(overlay, "PAUSADO", (20, 40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 255), 3, cv2.LINE_AA)
+                    draw_small("GEOPOLIS 2026 - Deteccion", overlay, scale)
+                if cv2.waitKey(video_speed) & 0xFF == ord('q'):
+                    break
                 continue
 
-            detections, green_count = detect_green_points(frame_in, transformer, H if calibrated else None, xoff, yoff, show_mode, scale, params_now)
+            # ======================================================
+            # Detectar puntos verdes (estos SÍ se guardan en GeoJSON)
+            # ======================================================
+            detections, green_count = detect_green_points(
+                frame_in, transformer, H if calibrated else None,
+                xoff, yoff, show_mode, scale, params_now
+            )
 
+            # ======================================================
+            # Overlay de estado — TODO en UNA sola ventana
+            # ======================================================
             if show_mode >= 1:
                 display = frame_in.copy()
+
+                # Dibujar cruces azules detectadas sobre frame_in
                 for (cx, cy) in all_centroids:
+                    # Ajustar coordenadas si estamos en recorte
                     ix, iy = int(cx) - xoff, int(cy) - yoff
                     if 0 <= ix < display.shape[1] and 0 <= iy < display.shape[0]:
-                        cv2.drawMarker(display, (ix, iy), (255, 100, 0), cv2.MARKER_CROSS, 16, 2)
-                cv2.putText(display, f"VERDES: {green_count} | CALIB: {calibrated}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                draw_small("GEOPOLIS 2026", display, scale)
+                        cv2.drawMarker(display, (ix, iy), (255, 100, 0),
+                                       markerType=cv2.MARKER_CROSS, markerSize=16, thickness=2)
+                        cv2.drawMarker(display, (ix, iy), (255, 200, 0),
+                                       markerType=cv2.MARKER_CROSS, markerSize=14, thickness=1)
 
+                # Si hay 4 cruces, dibujar rectángulo de recorte
+                if corners is not None:
+                    pts_draw = corners.astype(int)
+                    for i in range(4):
+                        p1 = (pts_draw[i][0] - xoff, pts_draw[i][1] - yoff)
+                        p2 = (pts_draw[(i+1)%4][0] - xoff, pts_draw[(i+1)%4][1] - yoff)
+                        cv2.line(display, p1, p2, (255, 200, 0), 1, cv2.LINE_AA)
+
+                # Texto: puntos verdes
+                cv2.putText(display, f"PUNTOS VERDES: {green_count}", (10, 22),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+
+                # Texto: estado calibración + cruces
+                cross_color = (0, 255, 0) if num_crosses_found >= 4 else (0, 140, 255)
+                if calibrated:
+                    cv2.putText(display, f"CALIBRADO | Cruces: {num_crosses_found}/4", (10, 44),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
+                else:
+                    cv2.putText(display, "SIN CALIBRACION - Presiona 'Recalibrar'", (10, 44),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 140, 255), 1, cv2.LINE_AA)
+                    cv2.putText(display, f"Cruces visibles: {num_crosses_found}/4", (10, 64),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, cross_color, 1, cv2.LINE_AA)
+
+                draw_small("GEOPOLIS 2026 - Deteccion", display, scale)
+
+            # ======================================================
+            # Guardar GeoJSON (solo puntos verdes, solo si calibrado)
+            # ======================================================
             if calibrated and detections:
                 guardar_geojson_puntos(detections, 'geojson/detecciones_puntos.geojson')
+                for f_name in ['geojson/detecciones_lineas.geojson', 'geojson/detecciones_poligonos.geojson']:
+                    try:
+                        with open(f_name, 'w') as fh:
+                            fh.write('{"type":"FeatureCollection","features":[]}')
+                    except Exception:
+                        pass
 
-            if cv2.waitKey(video_speed) & 0xFF == ord('q'): break
+            if cv2.waitKey(video_speed) & 0xFF == ord('q'):
+                break
+
     finally:
         cap.release()
         cv2.destroyAllWindows()
 
-# ================== Interfaz Tkinter (Simplificada para el ejemplo) ==================
+# ================== Interfaz Tkinter ==================
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Geopolis 2026 — Corrección Homografía")
-        self.geometry("800x600")
-        
-        # Variables de control
+        self.title("Geopolis 2026 — Detector Plastilina Verde + Cruces Azules")
+        self.geometry("820x720")
+        self.resizable(False, False)
+
         self.src_type = tk.StringVar(value="camera")
+        self.video_path = tk.StringVar(value=DEFAULT_VIDEO_FILE)
+        self.url_str = tk.StringVar(value="http://192.168.1.68:4747/video")
         self.camera_index = tk.StringVar(value="0")
+
+        xmin, ymin, xmax, ymax = DEFAULT_GEO_BOUNDS_UTM
         self.epsg_src = tk.StringVar(value=str(DEFAULT_EPSG_SRC))
-        self.xmin = tk.StringVar(value=str(DEFAULT_GEO_BOUNDS_UTM[0]))
-        self.ymin = tk.StringVar(value=str(DEFAULT_GEO_BOUNDS_UTM[1]))
-        self.xmax = tk.StringVar(value=str(DEFAULT_GEO_BOUNDS_UTM[2]))
-        self.ymax = tk.StringVar(value=str(DEFAULT_GEO_BOUNDS_UTM[3]))
-        
-        self.live_params = LiveParams(DEFAULT_PARAMS)
+        self.xmin = tk.StringVar(value=str(xmin))
+        self.ymin = tk.StringVar(value=str(ymin))
+        self.xmax = tk.StringVar(value=str(xmax))
+        self.ymax = tk.StringVar(value=str(ymax))
+        self.coord_preset = tk.StringVar(value="cuenca_valle_mexico")
+
+        self.show_mode = tk.IntVar(value=DEFAULT_SHOW_MODE)
+        self.scale = tk.DoubleVar(value=DEFAULT_SCALE)
+        self.video_speed = tk.IntVar(value=DEFAULT_VIDEO_SPEED_MS)
+        self.recalib_every = tk.IntVar(value=DEFAULT_RECALIB_EVERY)
+
         self.pause_event = threading.Event()
         self.recalib_event = threading.Event()
         self.stop_event = threading.Event()
         self.worker_thread = None
+        self.live_params = LiveParams(DEFAULT_PARAMS)
 
-        self._build_ui()
+        self._build()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _build_ui(self):
-        ttk.Label(self, text="Sistema de Detección Geopolis 2026", font=("Arial", 14, "bold")).pack(pady=10)
-        
-        f_coords = ttk.LabelFrame(self, text="Coordenadas UTM (Límites de las cruces)")
-        f_coords.pack(padx=10, pady=5, fill="x")
-        ttk.Label(f_coords, text="xmin:").grid(row=0, column=0); ttk.Entry(f_coords, textvariable=self.xmin).grid(row=0, column=1)
-        ttk.Label(f_coords, text="ymin:").grid(row=0, column=2); ttk.Entry(f_coords, textvariable=self.ymin).grid(row=0, column=3)
-        ttk.Label(f_coords, text="xmax:").grid(row=1, column=0); ttk.Entry(f_coords, textvariable=self.xmax).grid(row=1, column=1)
-        ttk.Label(f_coords, text="ymax:").grid(row=1, column=2); ttk.Entry(f_coords, textvariable=self.ymax).grid(row=1, column=3)
+    def _hsv_scale(self, parent, text, from_, to, init):
+        frm = ttk.Frame(parent)
+        lbl = ttk.Label(frm, text=text, width=10)
+        lbl.pack(side="left")
+        val_lbl = ttk.Label(frm, text=str(init), width=4)
+        val_lbl.pack(side="right")
+        sv = tk.IntVar(value=init)
+        scl = ttk.Scale(frm, from_=from_, to=to, orient="horizontal", variable=sv, length=200)
+        scl.pack(fill="x", padx=4)
+        def on_move(_=None):
+            val_lbl.config(text=str(int(sv.get())))
+        scl.configure(command=on_move)
+        return frm, sv
 
-        btn_f = ttk.Frame(self)
-        btn_f.pack(pady=20)
-        ttk.Button(btn_f, text="▶ Iniciar", command=self.start).pack(side="left", padx=5)
-        ttk.Button(btn_f, text="🔵 Recalibrar", command=lambda: self.recalib_event.set()).pack(side="left", padx=5)
-        ttk.Button(btn_f, text="Salir", command=self.quit).pack(side="left", padx=5)
+    def _apply_preset(self, *args):
+        preset = self.coord_preset.get()
+        presets = {
+            "guerrero_costa_chica": (GUERRERO_COSTA_CHICA_UTM, GUERRERO_COSTA_CHICA_EPSG),
+            "cuenca_valle_mexico": (CUENCA_VALLE_MEXICO_UTM, CUENCA_VALLE_MEXICO_EPSG),
+            "cuenca_valle_mexico_3d": (CUENCA_VALLE_MEXICO_3D_UTM, CUENCA_VALLE_MEXICO_3D_EPSG),
+        }
+        if preset not in presets:
+            return
+        (xmin, ymin, xmax, ymax), epsg = presets[preset]
+        self.xmin.set(str(xmin)); self.ymin.set(str(ymin))
+        self.xmax.set(str(xmax)); self.ymax.set(str(ymax))
+        self.epsg_src.set(str(epsg))
+        self._update_preset_desc()
 
-    def start(self):
-        geo_bounds = (float(self.xmin.get()), float(self.ymin.get()), float(self.xmax.get()), float(self.ymax.get()))
+    def _update_preset_desc(self):
+        descs = {
+            "guerrero_costa_chica": "EPSG:6369 — Guerrero Costa Chica",
+            "cuenca_valle_mexico": "EPSG:32614 — Sentinel-2 Geopolis (Nevado→Malinche)",
+            "cuenca_valle_mexico_3d": "EPSG:32614 — Mesa 3D original",
+        }
+        self.preset_desc.config(text=descs.get(self.coord_preset.get(), ""))
+
+    def _detect_cameras(self):
+        self.btn_detect_cam.config(state="disabled")
+        self.update()
+        cameras = list_available_cameras(10)
+        if cameras:
+            self.camera_combo['values'] = [str(i) for i in cameras]
+            self.camera_index.set(str(cameras[0]))
+            messagebox.showinfo("Cámaras", f"Encontradas: {cameras}\n(0=integrada, 1+=USB)")
+        else:
+            messagebox.showwarning("Sin cámaras", "No se detectaron cámaras.")
+        self.btn_detect_cam.config(state="normal")
+
+    def _build(self):
+        pad = {'padx': 8, 'pady': 3}
+
+        # Título
+        title_frm = ttk.Frame(self)
+        title_frm.pack(fill="x", padx=8, pady=(8, 2))
+        ttk.Label(title_frm, text="🎯 Geopolis 2026 — Plastilina Verde + Cruces Azules",
+                  font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        ttk.Label(title_frm, text="Cruces azules = georreferenciación (visibles en video, no se mapean). Solo puntos verdes al GeoJSON.",
+                  foreground="gray", wraplength=700).pack(anchor="w")
+
+        # Fuente de video
+        frm_src = ttk.LabelFrame(self, text="Fuente de video")
+        frm_src.pack(fill="x", **pad)
+        ttk.Radiobutton(frm_src, text="Archivo", value="file", variable=self.src_type).grid(row=0, column=0, sticky="w", padx=6)
+        ttk.Radiobutton(frm_src, text="URL", value="url", variable=self.src_type).grid(row=0, column=1, sticky="w", padx=6)
+        ttk.Radiobutton(frm_src, text="Cámara USB", value="camera", variable=self.src_type).grid(row=0, column=2, sticky="w", padx=6)
+        ttk.Label(frm_src, text="Archivo:").grid(row=1, column=0, sticky="e")
+        ttk.Entry(frm_src, textvariable=self.video_path, width=45).grid(row=1, column=1, columnspan=2, sticky="we")
+        ttk.Button(frm_src, text="Buscar…", command=self.pick_file).grid(row=1, column=3, padx=4)
+        ttk.Label(frm_src, text="URL:").grid(row=2, column=0, sticky="e")
+        ttk.Entry(frm_src, textvariable=self.url_str, width=45).grid(row=2, column=1, columnspan=2, sticky="we")
+        ttk.Label(frm_src, text="Cámara:").grid(row=3, column=0, sticky="e")
+        self.camera_combo = ttk.Combobox(frm_src, textvariable=self.camera_index,
+                                         values=["0","1","2","3","4"], width=6, state="readonly")
+        self.camera_combo.grid(row=3, column=1, sticky="w", padx=4)
+        self.btn_detect_cam = ttk.Button(frm_src, text="🔍 Detectar", command=self._detect_cameras)
+        self.btn_detect_cam.grid(row=3, column=2, sticky="w")
+        for i in range(4): frm_src.grid_columnconfigure(i, weight=1)
+
+        # Coordenadas
+        frm_geo = ttk.LabelFrame(self, text="Georreferenciación UTM")
+        frm_geo.pack(fill="x", **pad)
+        ttk.Label(frm_geo, text="Preset:").grid(row=0, column=0, sticky="e")
+        pc = ttk.Combobox(frm_geo, textvariable=self.coord_preset,
+                          values=["cuenca_valle_mexico", "cuenca_valle_mexico_3d", "guerrero_costa_chica"],
+                          state="readonly", width=25)
+        pc.grid(row=0, column=1, sticky="w", padx=4)
+        pc.bind("<<ComboboxSelected>>", self._apply_preset)
+        self.preset_desc = ttk.Label(frm_geo, text="", foreground="gray")
+        self.preset_desc.grid(row=0, column=2, columnspan=2, sticky="w")
+        self._update_preset_desc()
+
+        ttk.Label(frm_geo, text="EPSG:").grid(row=1, column=0, sticky="e")
+        ttk.Entry(frm_geo, textvariable=self.epsg_src, width=8).grid(row=1, column=1, sticky="w")
+        ttk.Label(frm_geo, text="xmin:").grid(row=2, column=0, sticky="e"); ttk.Entry(frm_geo, textvariable=self.xmin, width=14).grid(row=2, column=1, sticky="w")
+        ttk.Label(frm_geo, text="ymin:").grid(row=2, column=2, sticky="e"); ttk.Entry(frm_geo, textvariable=self.ymin, width=14).grid(row=2, column=3, sticky="w")
+        ttk.Label(frm_geo, text="xmax:").grid(row=3, column=0, sticky="e"); ttk.Entry(frm_geo, textvariable=self.xmax, width=14).grid(row=3, column=1, sticky="w")
+        ttk.Label(frm_geo, text="ymax:").grid(row=3, column=2, sticky="e"); ttk.Entry(frm_geo, textvariable=self.ymax, width=14).grid(row=3, column=3, sticky="w")
+        for i in range(4): frm_geo.grid_columnconfigure(i, weight=1)
+
+        # Visualización
+        frm_opt = ttk.LabelFrame(self, text="Visualización")
+        frm_opt.pack(fill="x", **pad)
+        ttk.Radiobutton(frm_opt, text="Ninguna", value=0, variable=self.show_mode).grid(row=0, column=0, sticky="w", padx=6)
+        ttk.Radiobutton(frm_opt, text="Detección", value=1, variable=self.show_mode).grid(row=0, column=1, sticky="w", padx=6)
+        ttk.Radiobutton(frm_opt, text="Todo + máscaras", value=2, variable=self.show_mode).grid(row=0, column=2, sticky="w", padx=6)
+        ttk.Label(frm_opt, text="Escala:").grid(row=1, column=0, sticky="e")
+        ttk.Entry(frm_opt, textvariable=self.scale, width=6).grid(row=1, column=1, sticky="w")
+        ttk.Label(frm_opt, text="Vel (ms):").grid(row=1, column=2, sticky="e")
+        ttk.Entry(frm_opt, textvariable=self.video_speed, width=6).grid(row=1, column=3, sticky="w")
+        ttk.Label(frm_opt, text="Recalib cada N frames (0=manual):").grid(row=2, column=0, columnspan=2, sticky="e")
+        ttk.Entry(frm_opt, textvariable=self.recalib_every, width=6).grid(row=2, column=2, sticky="w")
+
+        # Pestañas HSV
+        nb = ttk.Notebook(self)
+        nb.pack(fill="x", **pad)
+
+        tab_green  = ttk.Frame(nb); nb.add(tab_green,  text="🟢 Verde (plastilina)")
+        tab_blue = ttk.Frame(nb); nb.add(tab_blue, text="🔵 Azul (cruces)")
+        tab_area   = ttk.Frame(nb); nb.add(tab_area,   text="📐 Área")
+
+        # --- Verde ---
+        f, sv_gh_lo = self._hsv_scale(tab_green, "H bajo:", 0, 179, DEFAULT_PARAMS["GREEN_H_LOW"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_gh_hi = self._hsv_scale(tab_green, "H alto:", 0, 179, DEFAULT_PARAMS["GREEN_H_HIGH"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_gs_lo = self._hsv_scale(tab_green, "S bajo:", 0, 255, DEFAULT_PARAMS["GREEN_S_LOW"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_gs_hi = self._hsv_scale(tab_green, "S alto:", 0, 255, DEFAULT_PARAMS["GREEN_S_HIGH"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_gv_lo = self._hsv_scale(tab_green, "V bajo:", 0, 255, DEFAULT_PARAMS["GREEN_V_LOW"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_gv_hi = self._hsv_scale(tab_green, "V alto:", 0, 255, DEFAULT_PARAMS["GREEN_V_HIGH"]); f.pack(fill="x", pady=2, padx=6)
+        ttk.Label(tab_green, text="Tip: Si la imagen impresa tiene verdes, sube S bajo para filtrar solo plastilina saturada.",
+                  foreground="gray", wraplength=500).pack(anchor="w", padx=6, pady=4)
+
+        # --- Azul (cruces) ---
+        f, sv_bh_lo = self._hsv_scale(tab_blue, "H bajo:", 0, 179, DEFAULT_PARAMS["BLUE_H_LOW"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_bh_hi = self._hsv_scale(tab_blue, "H alto:", 0, 179, DEFAULT_PARAMS["BLUE_H_HIGH"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_bs_lo = self._hsv_scale(tab_blue, "S bajo:", 0, 255, DEFAULT_PARAMS["BLUE_S_LOW"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_bs_hi = self._hsv_scale(tab_blue, "S alto:", 0, 255, DEFAULT_PARAMS["BLUE_S_HIGH"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_bv_lo = self._hsv_scale(tab_blue, "V bajo:", 0, 255, DEFAULT_PARAMS["BLUE_V_LOW"]); f.pack(fill="x", pady=2, padx=6)
+        f, sv_bv_hi = self._hsv_scale(tab_blue, "V alto:", 0, 255, DEFAULT_PARAMS["BLUE_V_HIGH"]); f.pack(fill="x", pady=2, padx=6)
+        ttk.Label(tab_blue, text='Tip: Para azul claro, baja H bajo (~85). Usa modo "Todo + máscaras" para ver la máscara. Las cruces se ven en la ventana principal.',
+                  foreground="gray", wraplength=500).pack(anchor="w", padx=6, pady=4)
+
+        # --- Área ---
+        f, sv_min_area = self._hsv_scale(tab_area, "Mín (px²):", 1, 500, DEFAULT_PARAMS["MIN_AREA"]); f.pack(fill="x", pady=4, padx=6)
+        f, sv_max_area = self._hsv_scale(tab_area, "Máx (px²):", 100, 20000, DEFAULT_PARAMS["MAX_AREA"]); f.pack(fill="x", pady=4, padx=6)
+        ttk.Label(tab_area, text="Área mínima para puntos verdes. Subir para ignorar ruido, bajar para detectar plastilina pequeña.",
+                  foreground="gray", wraplength=500).pack(anchor="w", padx=6, pady=4)
+
+        # Sync
+        all_svs = [sv_gh_lo, sv_gh_hi, sv_gs_lo, sv_gs_hi, sv_gv_lo, sv_gv_hi,
+                   sv_bh_lo, sv_bh_hi, sv_bs_lo, sv_bs_hi, sv_bv_lo, sv_bv_hi,
+                   sv_min_area, sv_max_area]
+
+        def sync(*_):
+            self.live_params.update(
+                GREEN_H_LOW=int(sv_gh_lo.get()), GREEN_H_HIGH=int(sv_gh_hi.get()),
+                GREEN_S_LOW=int(sv_gs_lo.get()), GREEN_S_HIGH=int(sv_gs_hi.get()),
+                GREEN_V_LOW=int(sv_gv_lo.get()), GREEN_V_HIGH=int(sv_gv_hi.get()),
+                BLUE_H_LOW=int(sv_bh_lo.get()), BLUE_H_HIGH=int(sv_bh_hi.get()),
+                BLUE_S_LOW=int(sv_bs_lo.get()), BLUE_S_HIGH=int(sv_bs_hi.get()),
+                BLUE_V_LOW=int(sv_bv_lo.get()), BLUE_V_HIGH=int(sv_bv_hi.get()),
+                MIN_AREA=int(sv_min_area.get()), MAX_AREA=int(sv_max_area.get()),
+            )
+        for sv in all_svs:
+            sv.trace_add('write', sync)
+        sync()
+
+        # Botones
+        frm_btn = ttk.Frame(self); frm_btn.pack(fill="x", padx=8, pady=6)
+        ttk.Button(frm_btn, text="▶ Iniciar", command=self.start_detection).pack(side="left", padx=4)
+        ttk.Button(frm_btn, text="⏸ Pausar", command=self.pause_capture).pack(side="left", padx=4)
+        ttk.Button(frm_btn, text="▶ Reanudar", command=self.resume_capture).pack(side="left", padx=4)
+
+        recalib_btn = tk.Button(frm_btn, text="🔵 Recalibrar ahora", command=self.force_recalib,
+                                bg="#2196F3", fg="white", font=("Segoe UI", 10, "bold"),
+                                relief="flat", padx=10, pady=4)
+        recalib_btn.pack(side="left", padx=8)
+
+        ttk.Button(frm_btn, text="Salir", command=self._on_close).pack(side="right", padx=4)
+
+    def pick_file(self):
+        path = filedialog.askopenfilename(
+            title="Seleccionar video",
+            filetypes=[("Videos", "*.mp4;*.avi;*.mov;*.mkv"), ("Todos", "*.*")]
+        )
+        if path:
+            self.video_path.set(path)
+
+    def start_detection(self):
+        if self.worker_thread and self.worker_thread.is_alive():
+            messagebox.showinfo("Info", "Ya está corriendo.")
+            return
+        self.pause_event.clear()
+        self.recalib_event.clear()
+        self.stop_event.clear()
+
+        try:
+            epsg_src = int(self.epsg_src.get())
+            geo_bounds = (float(self.xmin.get()), float(self.ymin.get()),
+                          float(self.xmax.get()), float(self.ymax.get()))
+            video_speed = int(self.video_speed.get())
+            scale = float(self.scale.get()); assert 0.1 <= scale <= 2.0
+            recalib_every = max(0, int(self.recalib_every.get()))
+        except Exception as e:
+            messagebox.showerror("Error", f"Parámetros inválidos: {e}")
+            return
+
+        src_type = self.src_type.get()
+        if src_type == 'file':
+            source = self.video_path.get()
+            if not source: messagebox.showwarning("Falta", "Selecciona un archivo."); return
+        elif src_type == 'url':
+            source = self.url_str.get()
+            if not source.lower().startswith(("http://","https://","rtsp://")): messagebox.showwarning("URL","URL inválida."); return
+        else:
+            try: source = int(self.camera_index.get())
+            except: messagebox.showwarning("Cámara","Índice inválido."); return
+
         self.worker_thread = threading.Thread(
             target=run_pipeline,
-            args=(0, 'camera', geo_bounds, int(self.epsg_src.get()), 1, 1.0, 25, 0,
+            args=(source, src_type, geo_bounds, epsg_src,
+                  self.show_mode.get(), scale, video_speed, recalib_every,
                   self.live_params, self.pause_event, self.recalib_event, self.stop_event),
             daemon=True
         )
         self.worker_thread.start()
 
+        src_info = f"Cámara {source}" if src_type == 'camera' else source
+        messagebox.showinfo("Geopolis 2026",
+            f"Detector iniciado.\n\n"
+            f"Fuente: {src_info}\n"
+            f"Preset: {self.coord_preset.get()}\n"
+            f"EPSG: {epsg_src}\n\n"
+            "• Cruces AZULES se muestran en la ventana de detección (no se mapean)\n"
+            "• Solo plastilina VERDE se guarda como puntos GeoJSON\n"
+            "• Presiona 'Recalibrar' cuando veas 4/4 cruces\n"
+            "• Ajusta HSV en las pestañas si hay falsos positivos")
+
+    def pause_capture(self): self.pause_event.set()
+    def resume_capture(self): self.pause_event.clear()
+    def force_recalib(self): self.recalib_event.set()
+
+    def _on_close(self):
+        self.stop_event.set()
+        try:
+            if self.worker_thread: self.worker_thread.join(timeout=1.5)
+        except: pass
+        self.destroy()
+
 if __name__ == "__main__":
-    App().mainloop()
+    app = App()
+    app.mainloop()
