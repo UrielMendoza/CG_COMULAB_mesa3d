@@ -411,7 +411,7 @@ class App(tk.Tk):
 
         self.src_type = tk.StringVar(value="camera")
         self.video_path = tk.StringVar(value=DEFAULT_VIDEO_FILE)
-        self.url_str = tk.StringVar(value="http://127.0.0.1:4747/video")
+        self.url_str = tk.StringVar(value="http://192.168.1.68:4747/video")
         self.camera_index = tk.StringVar(value="0")
 
         xmin, ymin, xmax, ymax = DEFAULT_GEO_BOUNDS_UTM
