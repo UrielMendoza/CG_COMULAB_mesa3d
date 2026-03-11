@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Detector con UI (Tkinter) – v6 (calibración manual, cruces azules, cámara USB)
+Detector con UI (Tkinter) – v7 (calibración manual, cruces azules, cámara USB, preset Cuenca Valle)
+
+Cambios v7 (sobre v6):
+- Agregado preset "Cuenca del Valle de México" con coordenadas del informe Geopolis 2026
+  (EPSG:32614 — WGS 84 / UTM zona 14N): 409907, 2074280, 612270, 2184872
+  Cobertura: Nevado de Toluca (W) → Valle de México → La Malinche (E)
+- Selector de presets actualizado con ambas opciones
 
 Cambios v6:
 - Calibración manual por defecto (solo al hacer clic en "Recalibrar ahora")
@@ -30,9 +36,15 @@ from tkinter import ttk, filedialog, messagebox
 GUERRERO_COSTA_CHICA_UTM = (436770.3242, 1832196.0532, 506936.9275, 1892877.8394)  # xmin, ymin, xmax, ymax
 GUERRERO_COSTA_CHICA_EPSG = 6369
 
-# Coordenadas Cuenca Valle de México (comentadas, para referencia)
-# CUENCA_VALLE_MEXICO_UTM = (416316.969, 2079317.310, 617400.705, 2256323.915)  # xmin, ymin, xmax, ymax
-# CUENCA_VALLE_MEXICO_EPSG = 32614
+# Coordenadas Cuenca del Valle de México — Mesa 3D original (EPSG:32614)
+CUENCA_VALLE_MEXICO_3D_UTM = (416316.969, 2079317.310, 617400.705, 2256323.915)  # xmin, ymin, xmax, ymax
+CUENCA_VALLE_MEXICO_3D_EPSG = 32614
+
+# Coordenadas Cuenca del Valle de México — Encuadre Sentinel-2 Geopolis 2026 (EPSG:32614)
+# Nevado de Toluca (Oeste, ~99.86°W) → Valle de México → La Malinche (Este, ~98.03°W)
+# Latitud: ~18.76°N a ~19.76°N — Aprox. 202 km (E–W) × 111 km (N–S)
+CUENCA_VALLE_MEXICO_UTM = (409907, 2074280, 612270, 2184872)  # xmin, ymin, xmax, ymax
+CUENCA_VALLE_MEXICO_EPSG = 32614
 
 # Usar Guerrero Costa Chica por defecto
 DEFAULT_GEO_BOUNDS_UTM = GUERRERO_COSTA_CHICA_UTM
@@ -452,7 +464,7 @@ def run_pipeline(video_source, src_type, geo_bounds_utm, epsg_src,
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Detección Mesa 3D – Configuración (v6 - cruces azules, cámara USB)")
+        self.title("Detección Mesa 3D – Configuración (v7 - cruces azules, cámara USB, Cuenca Valle)")
         self.geometry("850x780")
         self.resizable(False, False)
 
@@ -517,9 +529,12 @@ class App(tk.Tk):
         if preset == "guerrero_costa_chica":
             xmin, ymin, xmax, ymax = GUERRERO_COSTA_CHICA_UTM
             epsg = GUERRERO_COSTA_CHICA_EPSG
-        # elif preset == "cuenca_valle_mexico":
-        #     xmin, ymin, xmax, ymax = CUENCA_VALLE_MEXICO_UTM
-        #     epsg = CUENCA_VALLE_MEXICO_EPSG
+        elif preset == "cuenca_valle_mexico":
+            xmin, ymin, xmax, ymax = CUENCA_VALLE_MEXICO_UTM
+            epsg = CUENCA_VALLE_MEXICO_EPSG
+        elif preset == "cuenca_valle_mexico_3d":
+            xmin, ymin, xmax, ymax = CUENCA_VALLE_MEXICO_3D_UTM
+            epsg = CUENCA_VALLE_MEXICO_3D_EPSG
         else:
             return
         
@@ -593,12 +608,19 @@ class App(tk.Tk):
         frm_geo = ttk.LabelFrame(self, text="Extremos UTM (EPSG origen)")
         frm_geo.pack(fill="x", **pad)
         
-        # Preset selector
+        # Preset selector — ahora con dos opciones
         ttk.Label(frm_geo, text="Preset:").grid(row=0, column=0, sticky="e")
         preset_combo = ttk.Combobox(frm_geo, textvariable=self.coord_preset, 
-                                    values=["guerrero_costa_chica"], state="readonly", width=25)
+                                    values=["guerrero_costa_chica", "cuenca_valle_mexico", "cuenca_valle_mexico_3d"],
+                                    state="readonly", width=25)
         preset_combo.grid(row=0, column=1, sticky="w", padx=4)
         preset_combo.bind("<<ComboboxSelected>>", self._apply_preset)
+        
+        # Descripción del preset seleccionado
+        self.preset_desc_label = ttk.Label(frm_geo, text="", foreground="gray")
+        self.preset_desc_label.grid(row=0, column=2, columnspan=2, sticky="w", padx=4)
+        self._update_preset_desc()
+        preset_combo.bind("<<ComboboxSelected>>", lambda e: (self._apply_preset(e), self._update_preset_desc()))
         
         ttk.Label(frm_geo, text="EPSG origen:").grid(row=1, column=0, sticky="e")
         ttk.Entry(frm_geo, textvariable=self.epsg_src, width=10).grid(row=1, column=1, sticky="w")
@@ -735,6 +757,16 @@ SOLUCIÓN DE PROBLEMAS:
         
         ttk.Button(frm_btn, text="Salir", command=self._on_close).pack(side="right", padx=6)
 
+    def _update_preset_desc(self):
+        """Actualiza la descripción del preset seleccionado."""
+        preset = self.coord_preset.get()
+        descs = {
+            "guerrero_costa_chica": "EPSG:6369 — Guerrero Costa Chica",
+            "cuenca_valle_mexico": "EPSG:32614 — Sentinel-2 Geopolis (Nevado→Malinche)",
+            "cuenca_valle_mexico_3d": "EPSG:32614 — Mesa 3D original (Cuenca Valle)",
+        }
+        self.preset_desc_label.config(text=descs.get(preset, ""))
+
     def pick_file(self):
         path = filedialog.askopenfilename(
             title="Seleccionar video",
@@ -793,9 +825,12 @@ SOLUCIÓN DE PROBLEMAS:
         self.worker_thread.start()
         
         source_info = f"Cámara índice {source}" if src_type == 'camera' else source
+        preset_info = self.coord_preset.get().replace("_", " ").title()
         messagebox.showinfo("Ejecutando",
                             f"Detección iniciada.\n\n"
-                            f"Fuente: {source_info}\n\n"
+                            f"Fuente: {source_info}\n"
+                            f"Preset geográfico: {preset_info}\n"
+                            f"EPSG: {epsg_src}\n\n"
                             "IMPORTANTE:\n"
                             "• La calibración es MANUAL por defecto\n"
                             "• Las cruces deben ser de color AZUL\n"
