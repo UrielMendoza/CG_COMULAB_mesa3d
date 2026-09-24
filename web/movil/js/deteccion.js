@@ -1,20 +1,27 @@
-// Núcleo de detección con OpenCV.js — puerto directo de escritorio/deteccion_ui.py
-// (modo Mesa 3D) y escritorio/deteccion_ui_juego.py (modo Juego).
+// Núcleo de detección con OpenCV.js — puerto directo de escritorio/detector_libre.py
+// (modo libre) y escritorio/detector_juego.py (modo juego).
 //
 // Todas las coordenadas de píxel son del frame procesado (ya reescalado).
 // `georef(px, py)` devuelve [lon, lat] o null si todavía no hay calibración.
 
+const ELONGACION_FLECHA = 1.7; // igual que escritorio/georreferencia.py
+
 // ================== Utilidades ==================
 
-// cv.inRange requiere Mats de límites del mismo tamaño; hacerlo en JS es más simple y igual de rápido.
-function mascaraHSV(cv, hsv, p, pref) {
-  const lo = [p[`${pref}_H_LOW`], p[`${pref}_S_LOW`], p[`${pref}_V_LOW`]];
-  const hi = [p[`${pref}_H_HIGH`], p[`${pref}_S_HIGH`], p[`${pref}_V_HIGH`]];
+// Rango [[hLo,hHi],[sLo,sHi],[vLo,vHi]]; si hLo > hHi el tono da la vuelta (rojo 170 → 7)
+export function rangoDe(p, pref) {
+  return [[p[`${pref}_H_LOW`], p[`${pref}_H_HIGH`]], [p[`${pref}_S_LOW`], p[`${pref}_S_HIGH`]], [p[`${pref}_V_LOW`], p[`${pref}_V_HIGH`]]];
+}
+
+function mascaraHSV(cv, hsv, rango) {
+  const [[hLo, hHi], [sLo, sHi], [vLo, vHi]] = rango;
+  const vuelta = hLo > hHi;
   const mask = new cv.Mat(hsv.rows, hsv.cols, cv.CV_8UC1);
   const src = hsv.data, dst = mask.data;
   for (let i = 0, j = 0; j < dst.length; i += 3, j++) {
     const h = src[i], s = src[i + 1], v = src[i + 2];
-    dst[j] = (h >= lo[0] && h <= hi[0] && s >= lo[1] && s <= hi[1] && v >= lo[2] && v <= hi[2]) ? 255 : 0;
+    const okH = vuelta ? (h >= hLo || h <= hHi) : (h >= hLo && h <= hHi);
+    dst[j] = (okH && s >= sLo && s <= sHi && v >= vLo && v <= vHi) ? 255 : 0;
   }
   return mask;
 }
@@ -30,8 +37,7 @@ function aHSV(cv, rgb, k) {
 function morph(cv, src, op, kernel, iters = 1) {
   const dst = new cv.Mat();
   if (iters <= 0) { src.copyTo(dst); return dst; } // mismo comportamiento que OpenCV con iterations=0
-  cv.morphologyEx(src, dst, op, kernel, new cv.Point(-1, -1), iters,
-    cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+  cv.morphologyEx(src, dst, op, kernel, new cv.Point(-1, -1), iters, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
   return dst;
 }
 
@@ -60,16 +66,21 @@ function boxPoints(rect) {
   ];
 }
 
-// Equivalente a contour_line_metrics(): cv2.fitLine(DIST_L2) = eje principal por mínimos cuadrados
-function metricasLinea(pts) {
-  if (pts.length < 2) return { length: 0, width: 0, aspect: 0 };
+// Eje principal por mínimos cuadrados (equivale a cv2.fitLine con DIST_L2)
+function ejePrincipal(pts) {
   let mx = 0, my = 0;
   for (const [x, y] of pts) { mx += x; my += y; }
   mx /= pts.length; my /= pts.length;
   let sxx = 0, sxy = 0, syy = 0;
   for (const [x, y] of pts) { const dx = x - mx, dy = y - my; sxx += dx * dx; sxy += dx * dy; syy += dy * dy; }
   const th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-  const vx = Math.cos(th), vy = Math.sin(th);
+  return { mx, my, vx: Math.cos(th), vy: Math.sin(th) };
+}
+
+// Equivalente a contour_line_metrics()
+function metricasLinea(pts) {
+  if (pts.length < 2) return { length: 0, width: 0, aspect: 0 };
+  const { mx, my, vx, vy } = ejePrincipal(pts);
   let tmin = Infinity, tmax = -Infinity, wsum = 0;
   for (const [x, y] of pts) {
     const dx = x - mx, dy = y - my;
@@ -99,13 +110,38 @@ function refinarMascaraLineas(cv, mask, kLong, kShort, iters) {
   return out;
 }
 
-// ================== Cruces azules (calibración) ==================
+// ================== Cruces azules y flecha de norte ==================
 
-// Equivalente a find_blue_cross_corners(). A diferencia de Python, devuelve las esquinas
-// en su posición real [TL, TR, BR, BL]; la orientación del mapa se elige aparte (config.ORIENTACIONES).
+// Equivalente a direccion_flecha(): centroide y dirección hacia la punta (el extremo más ancho)
+function direccionFlecha(mask, r) {
+  const pts = [];
+  const d = mask.data, W = mask.cols;
+  for (let y = r.y; y < r.y + r.height; y++) {
+    for (let x = r.x; x < r.x + r.width; x++) if (d[y * W + x]) pts.push([x, y]);
+  }
+  if (pts.length < 5) return null;
+  const { mx, my, vx, vy } = ejePrincipal(pts);
+  let tmin = Infinity, tmax = -Infinity;
+  const tp = pts.map(([x, y]) => {
+    const dx = x - mx, dy = y - my, t = dx * vx + dy * vy;
+    if (t < tmin) tmin = t;
+    if (t > tmax) tmax = t;
+    return [t, -dx * vy + dy * vx];
+  });
+  const corte = 0.35 * (tmax - tmin);
+  const ancho = (sel) => {
+    let lo = Infinity, hi = -Infinity;
+    for (const [t, p] of tp) if (sel(t)) { if (p < lo) lo = p; if (p > hi) hi = p; }
+    return hi > lo ? hi - lo : 0;
+  };
+  const pos = ancho((t) => t > tmax - corte), neg = ancho((t) => t < tmin + corte);
+  return { c: [mx, my], d: pos >= neg ? [vx, vy] : [-vx, -vy] };
+}
+
+// Equivalente a find_blue_cross_corners(): esquinas [TL, TR, BR, BL] reales, recorte y flecha.
 export function buscarCruces(cv, rgb, p, cfg, conMascara = false) {
   const hsv = aHSV(cv, rgb, cfg.blur);
-  const raw = mascaraHSV(cv, hsv, p, 'BLUE');
+  const raw = mascaraHSV(cv, hsv, rangoDe(p, 'BLUE'));
   hsv.delete();
   const k = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
   let mask = morph(cv, raw, cv.MORPH_OPEN, k);
@@ -115,14 +151,23 @@ export function buscarCruces(cv, rgb, p, cfg, conMascara = false) {
 
   const cs = contornos(cv, mask);
   const centroides = [];
+  let flecha = null, areaFlecha = 0;
   for (let i = 0; i < cs.size(); i++) {
     const c = cs.get(i);
     const area = cv.contourArea(c);
-    const r = cv.boundingRect(c);
-    const ar = r.height > 0 ? r.width / r.height : 0;
-    if (area >= cfg.areaMin && ar >= cfg.arMin && ar <= cfg.arMax) {
-      const M = cv.moments(c);
-      if (M.m00 > 0) centroides.push([M.m10 / M.m00, M.m01 / M.m00]);
+    if (area >= cfg.areaMin) {
+      const rr = cv.minAreaRect(c);
+      const elong = Math.max(rr.size.width, rr.size.height) / Math.max(Math.min(rr.size.width, rr.size.height), 1e-6);
+      const r = cv.boundingRect(c);
+      if (area >= 60 && elong >= ELONGACION_FLECHA) {
+        if (area > areaFlecha) { flecha = direccionFlecha(mask, r); areaFlecha = area; }
+      } else {
+        const ar = r.height > 0 ? r.width / r.height : 0;
+        if (ar >= cfg.arMin && ar <= cfg.arMax) {
+          const M = cv.moments(c);
+          if (M.m00 > 0) centroides.push([M.m10 / M.m00, M.m01 / M.m00]);
+        }
+      }
     }
     c.delete();
   }
@@ -130,17 +175,16 @@ export function buscarCruces(cv, rgb, p, cfg, conMascara = false) {
 
   let mascara = null;
   if (conMascara) mascara = mask; else mask.delete();
-
-  if (centroides.length < 4) return { corners: null, crop: null, centroides, mascara };
+  if (centroides.length < 4) return { corners: null, crop: null, centroides, flecha, mascara };
 
   const idx = (f, mejor) => centroides.reduce((b, pt, i) => (mejor(f(pt), f(centroides[b])) ? i : b), 0);
   const suma = (pt) => pt[0] + pt[1], dif = (pt) => pt[1] - pt[0];
-  const tl = centroides[idx(suma, (a, b) => a < b)];
-  const br = centroides[idx(suma, (a, b) => a > b)];
-  const tr = centroides[idx(dif, (a, b) => a < b)]; // y−x mínimo: arriba-derecha
-  const bl = centroides[idx(dif, (a, b) => a > b)]; // y−x máximo: abajo-izquierda
-  const corners = [tl, tr, br, bl];
-
+  const corners = [
+    centroides[idx(suma, (a, b) => a < b)],  // arriba-izquierda
+    centroides[idx(dif, (a, b) => a < b)],   // arriba-derecha (y−x mínimo)
+    centroides[idx(suma, (a, b) => a > b)],  // abajo-derecha
+    centroides[idx(dif, (a, b) => a > b)],   // abajo-izquierda (y−x máximo)
+  ];
   const xs = corners.map((c) => c[0]), ys = corners.map((c) => c[1]);
   const pad = 5;
   const crop = [
@@ -149,20 +193,21 @@ export function buscarCruces(cv, rgb, p, cfg, conMascara = false) {
     Math.min(rgb.cols - 1, Math.ceil(Math.max(...xs)) + pad),
     Math.min(rgb.rows - 1, Math.ceil(Math.max(...ys)) + pad),
   ];
-  return { corners, crop, centroides, mascara };
+  return { corners, crop, centroides, flecha, mascara };
 }
 
-// ================== Modo Mesa 3D: amarillo + verde → punto / línea / polígono ==================
+// ================== Modo libre: colores de plastilina → punto / línea / polígono ==================
 
-// Equivalente a process_frame_generic(). `rgb` puede ser el recorte; (xoff, yoff) lo ubican en el frame.
-export function detectarMesa(cv, rgb, p, georef, xoff, yoff, mascaraDe = null) {
+// Equivalente a process_frame_generic(). `colores`: { id: { hsv, activo, hex } } de config/colores.json.
+export function detectarMesa(cv, rgb, p, colores, georef, xoff, yoff, mascaraDe = null) {
   const hsv = aHSV(cv, rgb, 3);
-  const detecciones = [], dibujo = [];
-  const stats = { yellow: { point: 0, line: 0, polygon: 0 }, green: { point: 0, line: 0, polygon: 0 } };
+  const detecciones = [], dibujo = [], stats = {};
   let mascara = null;
 
-  for (const [color, pref] of [['yellow', 'YELLOW'], ['green', 'GREEN']]) {
-    const base = mascaraHSV(cv, hsv, p, pref);
+  for (const [color, def] of Object.entries(colores)) {
+    if (!def.activo) continue;
+    stats[color] = { point: 0, line: 0, polygon: 0 };
+    const base = mascaraHSV(cv, hsv, def.hsv);
     const ref = refinarMascaraLineas(cv, base, p.K_LONG, p.K_SHORT, p.MORPH_ITERS);
     base.delete();
     const cs = contornos(cv, ref);
@@ -180,7 +225,6 @@ export function detectarMesa(cv, rgb, p, georef, xoff, yoff, mascaraDe = null) {
       approx.delete(); c.delete();
       const { width: w2, height: h2 } = rect.size;
       const aspectRatio = Math.max(w2, h2) / Math.max(Math.min(w2, h2), 1e-6);
-
       const geo = georef ? pts.map(([x, y]) => georef(x, y)) : [];
 
       let tipo, geometry = null;
@@ -206,9 +250,11 @@ export function detectarMesa(cv, rgb, p, georef, xoff, yoff, mascaraDe = null) {
 
       stats[color][tipo]++;
       detecciones.push({ geometry, color, type: tipo });
-      const centro = [rect.center.x + xoff, rect.center.y + yoff];
-      const caja = boxPoints(rect).map(([x, y]) => [x + xoff, y + yoff]);
-      dibujo.push({ tipo, color, pts, caja, centro });
+      dibujo.push({
+        tipo, color, hex: def.hex, pts,
+        caja: boxPoints(rect).map(([x, y]) => [x + xoff, y + yoff]),
+        centro: [rect.center.x + xoff, rect.center.y + yoff],
+      });
     }
     cs.delete();
   }
@@ -216,12 +262,12 @@ export function detectarMesa(cv, rgb, p, georef, xoff, yoff, mascaraDe = null) {
   return { detecciones, dibujo, stats, mascara };
 }
 
-// ================== Modo Juego: solo plastilina verde → puntos ==================
+// ================== Modo juego: solo plastilina verde → puntos ==================
 
 // Equivalente a detect_green_points()
 export function detectarJuego(cv, rgb, p, georef, xoff, yoff, conMascara = false) {
   const hsv = aHSV(cv, rgb, 5);
-  const raw = mascaraHSV(cv, hsv, p, 'GREEN');
+  const raw = mascaraHSV(cv, hsv, rangoDe(p, 'GREEN'));
   hsv.delete();
   const k = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
   const m1 = morph(cv, raw, cv.MORPH_OPEN, k);
@@ -238,8 +284,8 @@ export function detectarJuego(cv, rgb, p, georef, xoff, yoff, conMascara = false
       if (M.m00 !== 0) {
         const cx = Math.trunc(M.m10 / M.m00) + xoff, cy = Math.trunc(M.m01 / M.m00) + yoff;
         const lonlat = georef ? georef(cx, cy) : null;
-        detecciones.push({ geometry: lonlat ? { type: 'Point', coordinates: lonlat } : null, color: 'green', type: 'point' });
-        dibujo.push({ tipo: 'point', color: 'green', centro: [cx, cy], n: detecciones.length });
+        detecciones.push({ geometry: lonlat ? { type: 'Point', coordinates: lonlat } : null, color: 'verde', type: 'point' });
+        dibujo.push({ tipo: 'point', color: 'verde', hex: '#35ed7e', centro: [cx, cy], n: detecciones.length });
       }
     }
     c.delete();
@@ -247,10 +293,10 @@ export function detectarJuego(cv, rgb, p, georef, xoff, yoff, conMascara = false
   cs.delete();
   let mascara = null;
   if (conMascara) mascara = mask; else mask.delete();
-  return { detecciones, dibujo, stats: { green: { point: detecciones.length } }, mascara };
+  return { detecciones, dibujo, stats: { verde: { point: detecciones.length } }, mascara };
 }
 
-// Convierte detecciones a FeatureCollection (mismas propiedades que los GeoJSON de la versión laptop)
+// FeatureCollection con las mismas propiedades que los GeoJSON de la versión laptop
 export function aGeoJSON(detecciones) {
   return {
     type: 'FeatureCollection',

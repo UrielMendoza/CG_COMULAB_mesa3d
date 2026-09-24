@@ -3,9 +3,10 @@ import { PRESETS, ORIENTACIONES } from './config.js';
 import { CATEGORIAS } from './osm.js';
 import { icono } from './iconos.js';
 import { esc, avisar, elegirArchivo } from './ui.js';
+import { descargarRespaldo, cargarRespaldo } from './respaldo.js';
 
 // ================== Pestaña "Mapeo" ==================
-export function panelMapeo(el, mapa) {
+export function panelMapeo(el, mapa, juego) {
   const render = () => {
     const lista = mapa.listaMapeo();
     const nVivo = mapa.vivo.features.length;
@@ -37,6 +38,14 @@ export function panelMapeo(el, mapa) {
           <button class="btn btn-chico btn-borde" data-quitar-imagen>Quitar imagen</button>
         </div>
         <p class="ayuda">La imagen (por ejemplo la misma impresión satelital) se estira a las esquinas del área; sirve también sin internet.</p>
+      </section>
+      <section class="seccion tus-datos">
+        <h3>Tus datos</h3>
+        <p class="ayuda">Todo lo que guardas (mapeo, nombres, notas, participantes y puntos del juego) se queda <b>solo en este dispositivo</b>. No se sube a ningún servidor y nadie más lo ve. Descarga un respaldo para guardarlo, compartirlo o abrirlo en otro equipo.</p>
+        <div class="rejilla-botones">
+          <button class="btn btn-verde" data-respaldo>${icono('descargar')} Descargar respaldo</button>
+          <button class="btn btn-borde" data-restaurar>${icono('subir')} Cargar respaldo</button>
+        </div>
       </section>`;
     const q = (s) => el.querySelector(s);
     q('[data-guardar-todo]').onclick = () => mapa.guardarTodasLasDetecciones();
@@ -49,6 +58,8 @@ export function panelMapeo(el, mapa) {
     q('[data-opacidad]').oninput = (e) => mapa.setOpacidadImagen(Number(e.target.value));
     q('[data-quitar-imagen]').onclick = () => mapa.quitarImagen();
     el.querySelectorAll('[data-abrir]').forEach((b) => { b.onclick = () => mapa.abrir(b.dataset.abrir); });
+    q('[data-respaldo]').onclick = () => descargarRespaldo(mapa, juego);
+    q('[data-restaurar]').onclick = () => cargarRespaldo(mapa, juego);
   };
   // Actualización ligera: solo el contador y los botones de "En vivo"
   const vivo = () => {
@@ -66,55 +77,66 @@ export function panelMapeo(el, mapa) {
 // ================== Pestaña "OSM" ==================
 export function panelOSM(el, osm, mapa) {
   let estado = '';
+  let cargando = false;
   const render = () => {
     const r = osm.resumen();
     const area = osm.areaKm2 ? `${Math.round(osm.areaKm2).toLocaleString('es-MX')} km²` : '—';
+    const fallas = Object.entries(osm.errores);
     el.innerHTML = `
       <section class="seccion osm-intro">
         <div class="osm-sello">${icono('globo')}<span>OpenStreetMap</span></div>
         <p>El mapa colaborativo del mundo, hecho por personas como las de tu comunidad. Consulta sus datos dentro del área de trabajo (${area}) para saber qué hay cerca de cada pieza de plastilina.</p>
-        <button class="btn btn-osm ancho" data-cargar>${icono('refrescar')} ${osm.cargado ? 'Volver a consultar' : 'Consultar datos OSM del área'}</button>
-        ${estado ? `<p class="ayuda estado-osm">${esc(estado)}</p>` : ''}
-        ${osm.fecha ? `<p class="ayuda">Datos guardados en este dispositivo el ${new Date(osm.fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}: funcionan sin internet.</p>` : ''}
+        <button class="btn btn-osm ancho" data-cargar ${cargando ? 'disabled' : ''}>${icono('refrescar')} ${cargando ? esc(estado) : osm.cargado ? 'Volver a consultar' : 'Consultar datos OSM del área'}</button>
+        ${!cargando && estado ? `<p class="ayuda estado-osm">${esc(estado)}</p>` : ''}
+        ${fallas.length && !cargando ? `<div class="aviso-osm">
+          <b>No se pudieron cargar ${fallas.length} categorías</b>
+          <ul>${fallas.map(([k, m]) => `<li>${esc(CATEGORIAS[k].nombre)}: ${esc(m)}</li>`).join('')}</ul>
+          <p>Los servidores públicos de OSM a veces están saturados. Espera un minuto y reintenta; lo que ya cargó se conserva.</p>
+          <button class="btn btn-chico btn-borde" data-reintentar>${icono('refrescar')} Reintentar solo esas</button>
+        </div>` : ''}
+        ${osm.predescargado && !cargando ? `<p class="ayuda">Datos incluidos con la plataforma para esta área (descargados el ${esc(osm.predescargado)}): funcionan sin internet y sin esperar a los servidores de OSM.</p>` : ''}
+        ${osm.fecha && !osm.predescargado && !cargando ? `<p class="ayuda">Guardado en este dispositivo el ${new Date(osm.fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}: funciona sin internet.</p>` : ''}
+        ${osm.grande ? '<p class="ayuda">Área grande: se omiten caseríos, arroyos, barrios pequeños y escuelas básicas para no saturar el mapa ni el servidor.</p>' : ''}
       </section>
       <section class="seccion">
         <h3>Capas de OpenStreetMap</h3>
         <ul class="leyenda-osm">${Object.entries(CATEGORIAS).map(([k, c]) => `
-          <li><label><input type="checkbox" data-cat="${k}" ${osm.visibles[k] ? 'checked' : ''}><i style="--c:${c.color}"></i>${c.nombre}</label><span>${r[k] != null ? r[k].toLocaleString('es-MX') : '—'}</span></li>`).join('')}</ul>
-        ${osm.cargado ? `<p class="ayuda">Toca cualquier pieza mapeada para ver la localidad, el servicio de salud, la escuela y el agua más cercanos. El GeoJSON exportado incluye esas columnas (osm_localidades, osm_salud…).</p>` : ''}
+          <li class="${osm.errores[k] ? 'con-error' : ''}"><label><input type="checkbox" data-cat="${k}" ${osm.visibles[k] ? 'checked' : ''}><i style="--c:${c.color}"></i>${c.nombre}</label><span>${r[k] != null ? r[k].toLocaleString('es-MX') : osm.errores[k] ? '!' : '—'}</span></li>`).join('')}</ul>
+        ${osm.cargado ? '<p class="ayuda">Toca cualquier pieza mapeada para ver qué hay cerca. El GeoJSON exportado incluye esas columnas (osm_localidades, osm_municipios…).</p>' : ''}
       </section>
       <section class="seccion">
         <h3>Buscar un lugar</h3>
-        <input type="search" placeholder="${osm.cargado ? 'Nombre de localidad, escuela, río…' : 'Primero consulta los datos OSM'}" data-buscar ${osm.cargado ? '' : 'disabled'}>
+        <input type="search" placeholder="${osm.cargado ? 'Localidad, colonia, cerro, río…' : 'Primero consulta los datos OSM'}" data-buscar ${osm.cargado ? '' : 'disabled'}>
         <ul class="resultados-busqueda" data-resultados></ul>
       </section>
       <p class="credito-osm">Datos © colaboradores de <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>, licencia ODbL. ¿Falta algo en tu comunidad? <a href="https://www.openstreetmap.org/fixthemap" target="_blank" rel="noopener">Agrégalo a OSM</a>.</p>`;
     const q = (s) => el.querySelector(s);
-    q('[data-cargar]').onclick = async () => {
-      const b = q('[data-cargar]');
-      b.disabled = true;
-      try {
-        const res = await osm.cargar(undefined, (m) => { estado = m; b.textContent = m; }, osm.cargado);
-        const total = Object.values(res).reduce((a, n) => a + n, 0);
-        estado = `${total.toLocaleString('es-MX')} elementos de OSM en el área.`;
-        avisar(estado, 'ok');
-      } catch (e) {
-        estado = e.message;
-        avisar(e.message, 'err');
-      }
+    const consultar = async (cats, forzar) => {
+      cargando = true;
+      estado = 'Consultando OpenStreetMap…';
+      render();
+      const { resumen, errores } = await osm.cargar(cats, (m) => { estado = m; const b = q('[data-cargar]'); if (b) b.lastChild.textContent = ` ${m}`; }, forzar);
+      cargando = false;
+      const total = Object.values(resumen).reduce((a, n) => a + n, 0);
+      const nErr = Object.keys(errores).length;
+      estado = `${total.toLocaleString('es-MX')} lugares de OSM en el área${nErr ? ` (${nErr} categorías pendientes)` : ''}.`;
+      avisar(estado, nErr ? 'err' : 'ok');
       render();
     };
+    q('[data-cargar]').onclick = () => consultar(undefined, osm.cargado);
+    const re = q('[data-reintentar]');
+    if (re) re.onclick = () => consultar(Object.keys(osm.errores), true);
     el.querySelectorAll('[data-cat]').forEach((c) => { c.onchange = () => osm.setVisible(c.dataset.cat, c.checked); });
     const buscar = q('[data-buscar]');
     buscar.oninput = () => {
       const res = osm.buscar(buscar.value);
-      q('[data-resultados]').innerHTML = res.map((x, i) => `<li><button data-i="${i}"><i style="--c:${CATEGORIAS[x.cat].color}"></i>${esc(x.nombre)}</button></li>`).join('');
+      q('[data-resultados]').innerHTML = res.map((x, i) => `<li><button data-i="${i}"><i style="--c:${CATEGORIAS[x.cat].color}"></i>${esc(x.nombre)}<small>${esc(CATEGORIAS[x.cat].frase)}</small></button></li>`).join('');
       q('[data-resultados]').querySelectorAll('button').forEach((b) => {
         b.onclick = () => { const x = res[+b.dataset.i]; mapa.map.setView([x.lat, x.lng], 14); };
       });
     };
   };
-  osm.alCambiar = render;
+  osm.alCambiar = () => { if (!cargando) render(); };
   render();
   return render;
 }
@@ -148,6 +170,13 @@ export function formularioArea(el, estado, alAplicar, { conOrientacion = false, 
   q('[data-preset]').onchange = (e) => {
     const pr = PRESETS[e.target.value];
     if (pr) llenar({ ...estado, preset: e.target.value, epsg: pr.epsg, bounds: pr.bounds, orientacion: conOrientacion ? q('[data-ori]').value : estado.orientacion });
+  };
+  llenar.bloquear = (bloq, msg = '') => {
+    el.querySelectorAll('input, select, button').forEach((x) => { x.disabled = bloq; });
+    let nota = el.querySelector('.nota-bloqueo');
+    if (!nota) { nota = document.createElement('p'); nota.className = 'nota-bloqueo'; el.prepend(nota); }
+    nota.hidden = !bloq;
+    nota.textContent = msg;
   };
   q('[data-aplicar]').onclick = () => {
     const bounds = [...el.querySelectorAll('[data-b]')].map((i) => parseFloat(i.value));

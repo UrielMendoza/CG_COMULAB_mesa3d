@@ -47,10 +47,44 @@ export function aplicarH(H, x, y) {
   return [(H[0] * x + H[1] * y + H[2]) / w, (H[3] * x + H[4] * y + H[5]) / w];
 }
 
-// corners: [[x,y] TL, TR, BR, BL] en píxeles del frame procesado.
+// ================== Orientación ==================
+
+// Con la flecha de norte (junto a la cruz NE) decide qué esquina geográfica es cada cruz.
+// corners: [TL, TR, BR, BL] reales; flecha: { c: [x, y], d: [dx, dy] hacia el norte }.
+// Igual que esquinas_desde_flecha() de escritorio/georreferencia.py: resuelve giros y espejo.
+export function esquinasDesdeFlecha(corners, flecha) {
+  const [cx, cy] = flecha.c, [dx, dy] = flecha.d;
+  let ne = 0, dmin = Infinity;
+  corners.forEach(([x, y], i) => { const dd = Math.hypot(x - cx, y - cy); if (dd < dmin) { dmin = dd; ne = i; } });
+  const a = (ne + 3) % 4, b = (ne + 1) % 4;
+  const dot = (i) => (corners[i][0] - corners[ne][0]) * dx + (corners[i][1] - corners[ne][1]) * dy;
+  const [se, nw] = dot(a) < dot(b) ? [a, b] : [b, a];
+  const esq = [];
+  esq[ne] = 'NE'; esq[se] = 'SE'; esq[nw] = 'NW'; esq[(ne + 2) % 4] = 'SW';
+  return esq;
+}
+
+export function nombreEsquinas(esq) {
+  const o = Object.values(ORIENTACIONES).find((v) => v.esquinas && v.esquinas.join() === esq.join());
+  return o ? o.nombre : 'Imagen en espejo';
+}
+
+// Devuelve { esquinas, nota }. 'auto' usa la flecha; sin flecha cae en 'norte_arriba'.
+export function resolverEsquinas(orientacion, corners, flecha) {
+  if (orientacion === 'auto') {
+    if (flecha && corners) {
+      const esquinas = esquinasDesdeFlecha(corners, flecha);
+      return { esquinas, nota: `Orientación por flecha: ${nombreEsquinas(esquinas)}`, auto: true };
+    }
+    return { esquinas: ORIENTACIONES.norte_arriba.esquinas, nota: 'No se vio la flecha de norte: se usó “Norte arriba”', auto: false };
+  }
+  const o = ORIENTACIONES[orientacion] || ORIENTACIONES.norte_arriba;
+  return { esquinas: o.esquinas, nota: o.nombre, auto: false };
+}
+
+// corners: [[x,y] TL, TR, BR, BL] en píxeles del frame procesado; esquinas: ['NW', …] por cruz.
 // Devuelve una función píxel → coordenadas del EPSG origen (metros), o null si la geometría es degenerada.
-export function calibrar(corners, bounds, orientacion) {
-  const esquinas = (ORIENTACIONES[orientacion] || ORIENTACIONES.norte_arriba).esquinas; // de config/georreferencia.json
+export function calibrar(corners, bounds, esquinas) {
   const H = homografia4(corners, esquinas.map((e) => UV[e]));
   if (!H) return null;
   const [xmin, ymin, xmax, ymax] = bounds;

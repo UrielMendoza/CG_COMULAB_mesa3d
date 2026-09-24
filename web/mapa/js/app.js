@@ -32,7 +32,7 @@ $('icoOSM').innerHTML = icono('globo');
 $('btnPanel').innerHTML = icono('panel');
 $('btnPanel').onclick = () => document.body.classList.toggle('panel-abierto');
 const activarPestana = pestanas($('lateral'), () => setTimeout(() => mapa.invalidar(), 50));
-const pMapeo = panelMapeo($('tabMapeo'), mapa);
+const pMapeo = panelMapeo($('tabMapeo'), mapa, juego);
 mapa.alCambiar = pMapeo.render;
 mapa.alCambiarVivo = pMapeo.vivo;
 panelOSM($('tabOSM'), osm, mapa);
@@ -48,7 +48,7 @@ async function aplicarArea(area) {
     avisar(`No se reconoce EPSG:${area.epsg}.`, 'err');
     return false;
   }
-  mapa.setEncuadre(esquinasLatLng(area.bounds, area.epsg), PRESETS[area.preset]?.nombre || `EPSG:${area.epsg}`);
+  mapa.setEncuadre(esquinasLatLng(area.bounds, area.epsg), PRESETS[area.preset]?.nombre || `EPSG:${area.epsg}`, area.preset);
   return true;
 }
 
@@ -101,6 +101,8 @@ async function leerDetecciones() {
   const el = $('estadoDetector');
   const reciente = fecha && Date.now() - fecha < 15000;
   el.classList.toggle('vivo', !!reciente);
+  // Con el detector activo, el área se cambia en su ventana (ahí se recalculan las posiciones)
+  llenarArea.bloquear(!!reciente, 'El detector está activo: cambia el área en su ventana con «Aplicar área». El mapa se actualiza solo.');
   el.querySelector('span').textContent = !hayArchivos
     ? 'Sin datos del detector todavía'
     : reciente

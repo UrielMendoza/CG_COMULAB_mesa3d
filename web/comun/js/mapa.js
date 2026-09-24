@@ -6,7 +6,7 @@
 //                  con nombre, nota y color; se guarda en el navegador y se exporta a GeoJSON
 //   · Capas      — archivos GeoJSON / KML / GPX cargados por el usuario
 //   · Encuadre, imagen de fondo y (en modo juego) puntos de control
-import { COLOR_PLASTILINA, PALETA } from './config.js';
+import { PALETA, colorPlastilina, nombreColor } from './config.js';
 import { distanciaKm } from './geo.js';
 import { icono } from './iconos.js';
 import { esc, fmtKm, avisar, editarPropiedades, confirmar, descargar, fechaArchivo, almacen } from './ui.js';
@@ -15,7 +15,6 @@ import { esc, fmtKm, avisar, editarPropiedades, confirmar, descargar, fechaArchi
 
 const CLAVE_MAPEO = 'mesa3d-mapeo-v1';
 const NOMBRE_TIPO = { point: 'Punto', line: 'Línea', polygon: 'Polígono', Point: 'Punto', LineString: 'Línea', Polygon: 'Polígono', MultiPolygon: 'Polígono', MultiLineString: 'Línea' };
-const NOMBRE_COLOR = { yellow: 'amarilla', green: 'verde' };
 
 // ---------- geometría ligera para mostrar medidas ----------
 function puntoRepresentativo(g) {
@@ -110,14 +109,14 @@ export class Mapa {
       position: 'topright',
       drawCircleMarker: false, drawText: false, cutPolygon: false, rotateMode: false,
     });
-    this.map.pm.setGlobalOptions({ pathOptions: { color: PALETA[2] } });
+    this.map.pm.setGlobalOptions({ pathOptions: { color: PALETA[6] } });
 
     this.map.on('pm:create', ({ layer, shape }) => {
       let geometry;
       if (shape === 'Circle') geometry = circuloAPoligono(layer.getLatLng(), layer.getRadius());
       else geometry = layer.toGeoJSON().geometry;
       this.map.removeLayer(layer);
-      const f = this._nuevaGuardada(geometry, { origen: 'dibujo', color: PALETA[2] });
+      const f = this._nuevaGuardada(geometry, { origen: 'dibujo', color: PALETA[6] });
       this.abrir(f.properties.id);
     });
     this.map.on('pm:remove', ({ layer }) => {
@@ -127,9 +126,9 @@ export class Mapa {
 
   // ================== Encuadre ==================
   // esquinas: [SW, NW, NE, SE] en [lat, lng]
-  setEncuadre(esquinas, etiqueta) {
+  setEncuadre(esquinas, etiqueta, preset = null) {
     this.gEncuadre.clearLayers();
-    L.polygon(esquinas, { color: '#2458c6', weight: 2, dashArray: '8 6', fill: false, interactive: false, pmIgnore: true }).addTo(this.gEncuadre);
+    L.polygon(esquinas, { color: '#5865f2', weight: 2.5, dashArray: '8 6', fill: false, interactive: false, pmIgnore: true }).addTo(this.gEncuadre);
     const cruz = L.divIcon({ className: 'cruz-mapa', html: '<span></span>', iconSize: [22, 22], iconAnchor: [11, 11] });
     ['SO', 'NO', 'NE', 'SE'].forEach((lbl, i) => {
       L.marker(esquinas[i], { icon: cruz, pmIgnore: true }).bindTooltip(`Cruz ${lbl}`, { direction: 'top' }).addTo(this.gEncuadre);
@@ -137,7 +136,7 @@ export class Mapa {
     this.bounds = L.latLngBounds(esquinas);
     this.etiquetaArea = etiqueta;
     if (this.overlay) this.overlay.setBounds(this.bounds);
-    if (this.osm) this.osm.setArea(esquinas);
+    if (this.osm) this.osm.setArea(esquinas, preset);
     this.ajustarEncuadre();
   }
 
@@ -157,11 +156,11 @@ export class Mapa {
     this._firmaVivo = firma;
     this.gVivo.clearLayers();
     for (const f of fc.features) {
-      const c = COLOR_PLASTILINA[f.properties.color] || f.properties.color || PALETA[0];
+      const c = colorPlastilina(f.properties.color);
       const capa = L.geoJSON(f, {
         pmIgnore: true,
         style: () => ({ color: c, weight: 3, fillColor: c, fillOpacity: 0.3, dashArray: '2 5', lineCap: 'round' }),
-        pointToLayer: (_, ll) => L.circleMarker(ll, { radius: 7, color: '#1b2330', weight: 1.5, fillColor: c, fillOpacity: 0.9, pmIgnore: true }),
+        pointToLayer: (_, ll) => L.circleMarker(ll, { radius: 7, color: '#0a0d3a', weight: 2, fillColor: c, fillOpacity: 0.95, pmIgnore: true }),
       }).getLayers()[0];
       capa.bindPopup(() => this._popupVivo(f), { className: 'popup-papel', maxWidth: 280, autoPanPaddingTopLeft: [16, 16], autoPanPaddingBottomRight: [64, 16] });
       this.gVivo.addLayer(capa);
@@ -173,7 +172,7 @@ export class Mapa {
     const div = document.createElement('div');
     const tipo = NOMBRE_TIPO[f.properties.type] || 'Detección';
     const [lat, lng] = puntoRepresentativo(f.geometry);
-    div.innerHTML = `<div class="popup-etiqueta" style="--c:${COLOR_PLASTILINA[f.properties.color] || '#888'}">En vivo · plastilina ${NOMBRE_COLOR[f.properties.color] || ''}</div>
+    div.innerHTML = `<div class="popup-etiqueta" style="--c:${colorPlastilina(f.properties.color)}">En vivo · plastilina ${nombreColor(f.properties.color)}</div>
       <div class="popup-titulo">${tipo}</div>
       <div class="popup-coord">${medida(f.geometry)}</div>
       ${this.osm ? this.osm.contextoHTML(lat, lng) : ''}
@@ -209,7 +208,7 @@ export class Mapa {
       origen: 'deteccion',
       plastilina: f.properties.color,
       tipo: f.properties.type,
-      color: COLOR_PLASTILINA[f.properties.color] || PALETA[0],
+      color: colorPlastilina(f.properties.color),
     });
   }
 
@@ -230,7 +229,7 @@ export class Mapa {
     const capa = L.geoJSON(f, {
       pmIgnore: false,
       style: () => this._estilo(f),
-      pointToLayer: (_, ll) => L.circleMarker(ll, { radius: 8, color: '#fffdf8', weight: 2.5, fillColor: f.properties.color, fillOpacity: 1, pmIgnore: false }),
+      pointToLayer: (_, ll) => L.circleMarker(ll, { radius: 8, color: '#ffffff', weight: 2.5, fillColor: f.properties.color, fillOpacity: 1, pmIgnore: false }),
     }).getLayers()[0];
     if (!capa) return;
     capa._idMapeo = f.properties.id;
@@ -252,7 +251,7 @@ export class Mapa {
     if (!f) return div;
     const p = f.properties;
     const [lat, lng] = puntoRepresentativo(f.geometry);
-    const origen = p.origen === 'dibujo' ? 'Dibujado a mano' : `Plastilina ${NOMBRE_COLOR[p.plastilina] || ''}`;
+    const origen = p.origen === 'dibujo' ? 'Dibujado a mano' : `Plastilina ${nombreColor(p.plastilina)}`;
     div.innerHTML = `<div class="popup-etiqueta" style="--c:${esc(p.color)}">${esc(origen)} · ${NOMBRE_TIPO[f.geometry.type] || ''}</div>
       <div class="popup-titulo">${esc(p.nombre || 'Sin nombre')}</div>
       ${p.nota ? `<p class="popup-nota">${esc(p.nota)}</p>` : ''}
@@ -301,6 +300,16 @@ export class Mapa {
     this._persistir();
   }
 
+  // Reemplaza todo el mapeo guardado (al cargar un respaldo)
+  reemplazarMapeo(features) {
+    this.guardadas = features.filter((f) => f.geometry && f.properties?.id);
+    this.gGuardado.clearLayers();
+    this.capaPorId.clear();
+    this.guardadas.forEach((f) => this._agregarGuardada(f));
+    this._persistir();
+    this.ajustarA(this.gGuardado);
+  }
+
   abrir(id) {
     const capa = this.capaPorId.get(id);
     if (!capa) return;
@@ -340,7 +349,7 @@ export class Mapa {
         const p = f.properties || {};
         this._nuevaGuardada(f.geometry, {
           nombre: p.nombre || p.name || '', nota: p.nota || p.description || '',
-          color: p.color && p.color.startsWith('#') ? p.color : (COLOR_PLASTILINA[p.color] || PALETA[2]),
+          color: colorPlastilina(p.color),
           origen: p.origen || 'importado', plastilina: p.plastilina,
         });
         n++;
@@ -369,8 +378,8 @@ export class Mapa {
       const fc = await this._leerComoGeoJSON(file);
       const capa = L.geoJSON(fc, {
         pmIgnore: true,
-        style: { color: '#c4532d', weight: 2, fillOpacity: 0.12 },
-        pointToLayer: (_, ll) => L.circleMarker(ll, { radius: 5, color: '#fffdf8', weight: 1.5, fillColor: '#c4532d', fillOpacity: 0.9, pmIgnore: true }),
+        style: { color: '#ec48bd', weight: 2, fillOpacity: 0.12 },
+        pointToLayer: (_, ll) => L.circleMarker(ll, { radius: 5, color: '#ffffff', weight: 1.5, fillColor: '#ec48bd', fillOpacity: 0.9, pmIgnore: true }),
         onEachFeature: (f, l) => {
           const p = f.properties || {};
           const nombre = p.nombre || p.name || p.NOMBRE || p.NOM_LOC;

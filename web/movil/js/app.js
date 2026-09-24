@@ -1,13 +1,14 @@
-// App del celular: cámara → OpenCV.js → calibración con cruces azules → georreferencia → mapa.
-// Mismo flujo que los detectores de la versión laptop, más el mapa compartido (web/comun).
-import { cargarConfigGeo, PRESETS, MODOS, SLIDERS, RESOLUCIONES, DEFAULT_RESOLUCION, DEFAULT_FPS } from '../../comun/js/config.js';
-import { calibrar, registrarEPSG, transformador, esquinasLatLng } from '../../comun/js/geo.js';
+// App del celular: cámara → OpenCV.js → calibración con cruces (y flecha de norte) azules →
+// georreferencia → mapa. Mismo flujo que los detectores de la versión laptop, más el mapa
+// compartido (web/comun).
+import { cargarConfigGeo, PRESETS, MODOS, SLIDERS, COLORES, RESOLUCIONES, DEFAULT_RESOLUCION, DEFAULT_FPS } from '../../comun/js/config.js';
+import { calibrar, resolverEsquinas, registrarEPSG, transformador, esquinasLatLng } from '../../comun/js/geo.js';
 import { Mapa } from '../../comun/js/mapa.js';
 import { ContextoOSM } from '../../comun/js/osm.js';
 import { Juego } from '../../comun/js/juego.js';
 import { panelMapeo, panelOSM, formularioArea } from '../../comun/js/paneles.js';
 import { icono } from '../../comun/js/iconos.js';
-import { $, avisar, almacen, pestanas, elegirArchivo } from '../../comun/js/ui.js';
+import { $, esc, avisar, almacen, pestanas, elegirArchivo } from '../../comun/js/ui.js';
 import { buscarCruces, detectarMesa, detectarJuego, aGeoJSON } from './deteccion.js';
 
 // Orden de carga: copia local opcional (web/movil/vendor/opencv.js) → CDN npm → sitio oficial de OpenCV
@@ -16,17 +17,19 @@ const FUENTES_OPENCV = [
   'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
   'https://docs.opencv.org/4.9.0/opencv.js',
 ];
-const CLAVE = 'mesa3d-movil-ajustes-v2';
+const CLAVE = 'mesa3d-movil-ajustes-v3';
 
 await cargarConfigGeo();
 
-// ================== Ajustes ==================
+// ================== Ajustes (se guardan solo en este dispositivo) ==================
+const copiaColores = () => JSON.parse(JSON.stringify(COLORES));
 function porDefecto() {
   const porModo = {};
   for (const [id, m] of Object.entries(MODOS)) {
     const pr = PRESETS[m.preset];
     porModo[id] = { preset: m.preset, epsg: pr.epsg, bounds: [...pr.bounds], orientacion: m.orientacion, recalibCada: 0, params: { ...m.params } };
   }
+  porModo.libre.colores = copiaColores();
   return { modo: 'libre', resolucion: DEFAULT_RESOLUCION, fps: DEFAULT_FPS, vista: 'deteccion', camaraId: '', porModo };
 }
 const A = (() => {
@@ -37,6 +40,8 @@ const A = (() => {
     const gm = g.porModo?.[id] || {};
     def.porModo[id] = { ...def.porModo[id], ...gm, params: { ...def.porModo[id].params, ...(gm.params || {}) } };
   }
+  // Colores nuevos agregados a config/colores.json aparecen aunque haya ajustes guardados
+  def.porModo.libre.colores = { ...copiaColores(), ...(g.porModo?.libre?.colores || {}) };
   return { ...def, ...g, porModo: def.porModo };
 })();
 const guardar = () => almacen.guardar(CLAVE, A);
@@ -50,6 +55,7 @@ let pausado = false;
 let pedirCalibracion = false;
 let georef = null;
 let crop = null;
+let ultimas = null;          // { corners, flecha } de la última calibración (para recalcular al cambiar el área)
 let tamProc = [0, 0];
 let numFrame = 0;
 let ultimoProceso = 0;
@@ -67,14 +73,13 @@ const osm = new ContextoOSM(mapa.map);
 mapa.osm = osm;
 const juego = new Juego(mapa, osm, () => geojsonActual);
 
-const pMapeo = panelMapeo($('tabMapeo'), mapa);
+const pMapeo = panelMapeo($('tabMapeo'), mapa, juego);
 mapa.alCambiar = pMapeo.render;
 mapa.alCambiarVivo = pMapeo.vivo;
 panelOSM($('tabOSM'), osm, mapa);
 juego.montar($('tabJuego'));
 const activarPestana = pestanas($('hoja'));
 
-// Iconos de la interfaz
 $('icoOSM').innerHTML = icono('globo');
 $('btnCerrarHoja').innerHTML = icono('cerrar');
 $('btnCamara').innerHTML = `${icono('camara')} Usar la cámara`;
@@ -134,25 +139,34 @@ async function aplicarArea() {
     avisar(`No se reconoce EPSG:${c.epsg}. Revisa el código o conéctate a internet una vez.`, 'err');
     return false;
   }
-  mapa.setEncuadre(esquinasLatLng(c.bounds, c.epsg), PRESETS[c.preset]?.nombre || `EPSG:${c.epsg}`);
-  resetCalibracion();
+  mapa.setEncuadre(esquinasLatLng(c.bounds, c.epsg), PRESETS[c.preset]?.nombre || `EPSG:${c.epsg}`, c.preset);
+  // Si ya había calibración, se recalcula con las mismas cruces: las piezas se mueven solas al nuevo lugar
+  if (ultimas && crop && calibrarCon(ultimas.corners, ultimas.flecha)) {
+    avisar('Área actualizada: las piezas ya están en su nuevo lugar.', 'ok');
+  } else {
+    resetCalibracion();
+  }
   return true;
 }
 
 function resetCalibracion() {
   georef = null;
   crop = null;
+  ultimas = null;
   geojsonActual = { type: 'FeatureCollection', features: [] };
   mapa.setDetecciones(geojsonActual);
 }
 
-function calibrarCon(corners) {
+// Devuelve la nota de orientación, o null si la geometría de las cruces no sirve
+function calibrarCon(corners, flecha) {
   const c = cfg();
-  const aMetros = calibrar(corners, c.bounds, c.orientacion);
-  if (!aMetros) return false;
+  const { esquinas, nota } = resolverEsquinas(c.orientacion, corners, flecha);
+  const aMetros = calibrar(corners, c.bounds, esquinas);
+  if (!aMetros) return null;
   const aLonLat = transformador(c.epsg);
   georef = (x, y) => { const [mx, my] = aMetros(x, y); return aLonLat(mx, my); };
-  return true;
+  ultimas = { corners, flecha };
+  return nota;
 }
 
 // ================== Fuente de video ==================
@@ -215,7 +229,7 @@ async function listarCamaras() {
   try {
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
     const sel = $('selCamara');
-    sel.innerHTML = '<option value="">Trasera (automática)</option>' + devs.map((d, i) => `<option value="${d.deviceId}">${d.label || `Cámara ${i + 1}`}</option>`).join('');
+    sel.innerHTML = '<option value="">Trasera (automática)</option>' + devs.map((d, i) => `<option value="${d.deviceId}">${esc(d.label || `Cámara ${i + 1}`)}</option>`).join('');
     sel.value = devs.some((d) => d.deviceId === A.camaraId) ? A.camaraId : '';
   } catch (_) { /* sin permiso aún */ }
 }
@@ -243,7 +257,7 @@ function procesar() {
   if (W !== tamProc[0] || H !== tamProc[1]) {
     tamProc = [W, H];
     lienzo.width = W; lienzo.height = H;
-    georef = null; crop = null;
+    georef = null; crop = null; ultimas = null;
   }
 
   ctx.drawImage(video, 0, 0, W, H);
@@ -256,14 +270,15 @@ function procesar() {
   const p = c.params;
   numFrame++;
 
-  // Las cruces se buscan siempre (retroalimentación); la homografía solo cambia al calibrar
-  const cruces = buscarCruces(cv, rgb, p, MODOS[A.modo].cruces, A.vista === 'blue');
+  // Cruces y flecha se buscan siempre (retroalimentación); la homografía solo cambia al calibrar
+  const cruces = buscarCruces(cv, rgb, p, MODOS[A.modo].cruces, A.vista === 'azul');
   if ((c.recalibCada > 0 && numFrame % c.recalibCada === 0) || pedirCalibracion) {
     const manual = pedirCalibracion;
     pedirCalibracion = false;
-    if (cruces.corners && calibrarCon(cruces.corners)) {
+    const nota = cruces.corners ? calibrarCon(cruces.corners, cruces.flecha) : null;
+    if (nota) {
       crop = cruces.crop;
-      if (manual) avisar('Calibrado: las 4 cruces se reconocieron.', 'ok');
+      if (manual) avisar(`Calibrado con 4 cruces. ${nota}.`, 'ok');
     } else if (manual) {
       avisar(`Se ven ${cruces.centroides.length} de 4 cruces azules. Revisa la luz o el encuadre.`, 'err');
     }
@@ -284,15 +299,15 @@ function procesar() {
     xoff = x0; yoff = y0;
   }
   const g = calibrado ? georef : null;
-  const vistaColor = A.vista === 'yellow' || A.vista === 'green' ? A.vista : null;
+  const vistaColor = A.vista !== 'deteccion' && A.vista !== 'azul' ? A.vista : null;
   const r = A.modo === 'libre'
-    ? detectarMesa(cv, sub, p, g, xoff, yoff, vistaColor)
-    : detectarJuego(cv, sub, p, g, xoff, yoff, vistaColor === 'green');
+    ? detectarMesa(cv, sub, p, c.colores, g, xoff, yoff, vistaColor)
+    : detectarJuego(cv, sub, p, g, xoff, yoff, vistaColor === 'verde');
   if (sub !== rgb) sub.delete();
   rgb.delete();
 
-  const mascara = A.vista === 'blue' ? cruces.mascara : r.mascara;
-  if (mascara) pintarMascara(mascara, A.vista === 'blue' ? 0 : xoff, A.vista === 'blue' ? 0 : yoff, W, H);
+  const mascara = A.vista === 'azul' ? cruces.mascara : r.mascara;
+  if (mascara) pintarMascara(mascara, A.vista === 'azul' ? 0 : xoff, A.vista === 'azul' ? 0 : yoff, W, H);
   if (cruces.mascara) cruces.mascara.delete();
   if (r.mascara) r.mascara.delete();
 
@@ -319,8 +334,6 @@ function pintarMascara(mask, xoff, yoff, W, H) {
 }
 
 // ================== Dibujo sobre el video ==================
-const COL = { yellow: '#ffd21f', green: '#3ee07f' };
-
 function trazo(pts, cerrar) {
   if (!pts || !pts.length) return;
   ctx.beginPath();
@@ -333,16 +346,17 @@ function trazo(pts, cerrar) {
 function dibujarDetecciones(dibujo) {
   const lw = Math.max(2, lienzo.width / 420);
   for (const d of dibujo) {
-    const c = COL[d.color];
     ctx.lineWidth = lw;
-    ctx.strokeStyle = c;
+    ctx.strokeStyle = d.hex;
     if (d.tipo === 'line') trazo(d.caja, true);
     else if (d.tipo === 'polygon') { ctx.setLineDash([lw * 2, lw * 1.5]); trazo(d.pts, true); ctx.setLineDash([]); }
     else {
       const [x, y] = d.centro;
+      ctx.strokeStyle = '#0a0d3a'; ctx.lineWidth = lw * 2.2;
       ctx.beginPath(); ctx.arc(x, y, lw * 3.5, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, lw, 0, Math.PI * 2); ctx.fill();
-      if (d.n) { ctx.fillStyle = '#fff'; ctx.font = `600 ${Math.round(lw * 5)}px "JetBrains Mono", monospace`; ctx.fillText(String(d.n), x + lw * 4.5, y - lw * 2); }
+      ctx.strokeStyle = d.hex; ctx.lineWidth = lw;
+      ctx.beginPath(); ctx.arc(x, y, lw * 3.5, 0, Math.PI * 2); ctx.stroke();
+      if (d.n) { ctx.fillStyle = '#fff'; ctx.font = `600 ${Math.round(lw * 5)}px Inter, sans-serif`; ctx.fillText(String(d.n), x + lw * 4.5, y - lw * 2); }
     }
   }
 }
@@ -352,34 +366,47 @@ function dibujarEstado({ cruces, calibrado, stats, pausa }) {
   const lw = Math.max(2, W / 420);
   if (calibrado) {
     const [x0, y0, x1, y1] = crop;
-    ctx.fillStyle = 'rgba(17,22,30,0.55)';
+    ctx.fillStyle = 'rgba(10,13,58,0.6)';
     ctx.fillRect(0, 0, W, y0); ctx.fillRect(0, y1, W, H - y1);
     ctx.fillRect(0, y0, x0, y1 - y0); ctx.fillRect(x1, y0, W - x1, y1 - y0);
   }
   const m = lw * 5;
   ctx.lineWidth = lw * 1.2;
-  ctx.strokeStyle = '#6ea8ff';
+  ctx.strokeStyle = '#8f98ff';
   for (const [x, y] of cruces.centroides) {
     ctx.beginPath(); ctx.moveTo(x - m, y); ctx.lineTo(x + m, y); ctx.moveTo(x, y - m); ctx.lineTo(x, y + m); ctx.stroke();
   }
-  if (cruces.corners) { ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(110,168,255,0.8)'; trazo(cruces.corners, true); }
+  if (cruces.corners) { ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(143,152,255,0.85)'; trazo(cruces.corners, true); }
+  if (cruces.flecha) {
+    // Flecha de norte reconocida: se dibuja su dirección en magenta
+    const { c: [fx, fy], d: [dx, dy] } = cruces.flecha;
+    const L = lw * 22, tx = fx + dx * L, ty = fy + dy * L;
+    ctx.strokeStyle = '#ec48bd'; ctx.fillStyle = '#ec48bd'; ctx.lineWidth = lw * 1.5;
+    ctx.beginPath(); ctx.moveTo(fx - dx * L * 0.4, fy - dy * L * 0.4); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tx, ty);
+    ctx.lineTo(tx - dx * lw * 6 - dy * lw * 4, ty - dy * lw * 6 + dx * lw * 4);
+    ctx.lineTo(tx - dx * lw * 6 + dy * lw * 4, ty - dy * lw * 6 - dx * lw * 4);
+    ctx.closePath(); ctx.fill();
+    ctx.font = `800 ${Math.round(lw * 7)}px "Hanken Grotesk", sans-serif`;
+    ctx.fillText('N', tx + dx * lw * 4 - lw * 2.5, ty + dy * lw * 4 + lw * 2.5);
+  }
   if (pausa) {
-    ctx.fillStyle = 'rgba(17,22,30,0.6)'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#fff'; ctx.font = `600 ${Math.round(W / 18)}px Fraunces, Georgia, serif`;
-    ctx.textAlign = 'center'; ctx.fillText('En pausa', W / 2, H / 2); ctx.textAlign = 'start';
+    ctx.fillStyle = 'rgba(10,13,58,0.65)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.font = `800 ${Math.round(W / 16)}px "Hanken Grotesk", sans-serif`;
+    ctx.textAlign = 'center'; ctx.fillText('EN PAUSA', W / 2, H / 2); ctx.textAlign = 'start';
   }
 
   const n = cruces.centroides.length;
   const pildoras = [calibrado
     ? '<span class="pildora calibrado"><i></i>Calibrado</span>'
-    : `<span class="pildora" style="--c:${n >= 4 ? '#6ea8ff' : '#f3b58f'}"><i></i>Cruces ${Math.min(n, 4)}/4${n > 4 ? ` (+${n - 4})` : ''}</span>`];
+    : `<span class="pildora" style="--c:${n >= 4 ? '#8f98ff' : '#ec48bd'}"><i></i>Cruces ${Math.min(n, 4)}/4${n > 4 ? ` (+${n - 4})` : ''}</span>`];
+  if (c_orientacionAuto()) pildoras.push(`<span class="pildora" style="--c:${cruces.flecha ? '#35ed7e' : '#ec48bd'}"><i></i>${cruces.flecha ? 'Flecha N' : 'Sin flecha N'}</span>`);
   if (stats) {
-    if (A.modo === 'libre') {
-      const f = (s) => `${s.point}·${s.line}·${s.polygon}`;
-      pildoras.push(`<span class="pildora" style="--c:${COL.yellow}"><i></i>${f(stats.yellow)}</span>`);
-      pildoras.push(`<span class="pildora" style="--c:${COL.green}"><i></i>${f(stats.green)}</span>`);
-    } else {
-      pildoras.push(`<span class="pildora" style="--c:${COL.green}"><i></i>${stats.green.point} piezas</span>`);
+    const tot = Object.entries(stats).filter(([, s]) => s.point + (s.line || 0) + (s.polygon || 0) > 0);
+    for (const [col, s] of tot) {
+      const hex = A.modo === 'libre' ? cfg().colores[col]?.hex : '#35ed7e';
+      const txt = A.modo === 'libre' ? `${s.point}·${s.line}·${s.polygon}` : `${s.point} piezas`;
+      pildoras.push(`<span class="pildora" style="--c:${hex}"><i></i>${txt}</span>`);
     }
   }
   const html = pildoras.join('');
@@ -387,13 +414,17 @@ function dibujarEstado({ cruces, calibrado, stats, pausa }) {
   if (el.innerHTML !== html) el.innerHTML = html;
   $('btnCalibrar').classList.toggle('lista', !!cruces.corners && !calibrado);
 }
+const c_orientacionAuto = () => cfg().orientacion === 'auto';
 
 // ================== Panel "Cámara" ==================
 const llenarArea = formularioArea($('formArea'), cfg(), async (area) => {
   Object.assign(cfg(), area);
   guardar();
-  if (await aplicarArea()) avisar('Área aplicada. Vuelve a calibrar con las cruces.', 'ok');
-}, { conOrientacion: true });
+  if (await aplicarArea()) avisar(ultimas ? 'Área aplicada: las piezas ya están en su nuevo lugar.' : 'Área aplicada. Calibra con las cruces.', 'ok');
+}, {
+  conOrientacion: true,
+  extra: '<p class="ayuda">Orientación automática: pon una <b>flecha azul apuntando al norte</b> junto a la cruz de arriba a la derecha del mapa (esquina noreste). Si no la pones, se usa “Norte arriba”; también puedes elegir la orientación a mano.</p>',
+});
 
 function pintarAjustes() {
   const c = cfg();
@@ -402,28 +433,57 @@ function pintarAjustes() {
   $('selResolucion').value = A.resolucion;
   $('inpFps').value = A.fps;
   $('inpRecalib').value = c.recalibCada;
-  $('selVistaCam').querySelector('option[value="yellow"]').hidden = A.modo !== 'libre';
-  if (A.modo !== 'libre' && A.vista === 'yellow') A.vista = 'deteccion';
+  // Vistas de máscara: una por color activo + la azul de las cruces
+  const cols = A.modo === 'libre' ? Object.entries(c.colores).filter(([, v]) => v.activo) : [['verde', { nombre: 'Verde' }]];
+  $('selVistaCam').innerHTML = '<option value="deteccion">Detección</option>'
+    + cols.map(([k, v]) => `<option value="${k}">Máscara ${esc(v.nombre.toLowerCase())}</option>`).join('')
+    + '<option value="azul">Máscara azul (cruces y flecha)</option>';
+  if (![...$('selVistaCam').options].some((o) => o.value === A.vista)) A.vista = 'deteccion';
   $('selVistaCam').value = A.vista;
   pintarSliders();
 }
 
+function filaSlider(obj, clave, texto, min, max, paso, alCambiar) {
+  const fila = document.createElement('label');
+  fila.className = 'slider';
+  fila.innerHTML = `<span>${texto}</span><input type="range" min="${min}" max="${max}" step="${paso}" value="${obj[clave]}"><output>${obj[clave]}</output>`;
+  const inp = fila.querySelector('input'), out = fila.querySelector('output');
+  inp.oninput = () => { obj[clave] = Number(inp.value); out.textContent = inp.value; alCambiar(); };
+  return fila;
+}
+
 function pintarSliders() {
   const cont = $('sliders');
-  const p = cfg().params;
+  const c = cfg();
   cont.innerHTML = '';
+  // Editor de colores de plastilina (modo libre)
+  if (A.modo === 'libre') {
+    const bloque = document.createElement('div');
+    bloque.className = 'editor-colores';
+    bloque.innerHTML = '<h4>Colores de plastilina</h4><p class="ayuda">El azul queda reservado para las cruces y la flecha. Blanco y negro se confunden con el papel y las sombras: úsalos solo sobre fondos de color.</p>';
+    for (const [id, col] of Object.entries(c.colores)) {
+      const det = document.createElement('details');
+      det.className = 'color-plastilina';
+      det.innerHTML = `<summary><label class="check" onclick="event.stopPropagation()"><input type="checkbox" ${col.activo ? 'checked' : ''}></label><i style="--c:${col.hex}"></i><b>${esc(col.nombre)}</b><small>H ${col.hsv[0][0]}–${col.hsv[0][1]}</small></summary>`;
+      det.querySelector('input').onchange = (e) => { col.activo = e.target.checked; guardar(); pintarAjustes(); };
+      // hsv como objeto plano para los sliders
+      const o = { hLo: col.hsv[0][0], hHi: col.hsv[0][1], sLo: col.hsv[1][0], sHi: col.hsv[1][1], vLo: col.hsv[2][0], vHi: col.hsv[2][1] };
+      const aplicar = () => {
+        col.hsv = [[o.hLo, o.hHi], [o.sLo, o.sHi], [o.vLo, o.vHi]];
+        det.querySelector('small').textContent = `H ${o.hLo}–${o.hHi}`;
+        guardar();
+      };
+      [['hLo', 'H bajo', 179], ['hHi', 'H alto', 179], ['sLo', 'S bajo', 255], ['sHi', 'S alto', 255], ['vLo', 'V bajo', 255], ['vHi', 'V alto', 255]]
+        .forEach(([k, t, max]) => det.appendChild(filaSlider(o, k, t, 0, max, 1, aplicar)));
+      bloque.appendChild(det);
+    }
+    cont.appendChild(bloque);
+  }
   for (const [titulo, lista] of SLIDERS[A.modo]) {
     const grupo = document.createElement('div');
     grupo.className = 'grupo-sliders';
     grupo.innerHTML = `<h4>${titulo}</h4>`;
-    for (const [clave, texto, min, max, paso] of lista) {
-      const fila = document.createElement('label');
-      fila.className = 'slider';
-      fila.innerHTML = `<span>${texto}</span><input type="range" min="${min}" max="${max}" step="${paso}" value="${p[clave]}"><output>${p[clave]}</output>`;
-      const inp = fila.querySelector('input'), out = fila.querySelector('output');
-      inp.oninput = () => { p[clave] = Number(inp.value); out.textContent = inp.value; guardar(); };
-      grupo.appendChild(fila);
-    }
+    for (const [clave, texto, min, max, paso] of lista) grupo.appendChild(filaSlider(c.params, clave, texto, min, max, paso, guardar));
     cont.appendChild(grupo);
   }
 }
@@ -437,6 +497,7 @@ async function setModo(modo) {
   const actual = document.querySelector('#hoja [aria-selected="true"]')?.dataset.pestana;
   if (modo === 'juego') activarPestana('juego');
   else if (!actual || actual === 'juego') activarPestana('camara');
+  ultimas = null;
   pintarAjustes();
   await aplicarArea();
 }
@@ -475,7 +536,12 @@ $('selResolucion').onchange = (e) => { A.resolucion = Number(e.target.value); gu
 $('inpFps').onchange = (e) => { A.fps = Math.min(30, Math.max(1, Number(e.target.value) || DEFAULT_FPS)); guardar(); };
 $('inpRecalib').onchange = (e) => { cfg().recalibCada = Math.max(0, parseInt(e.target.value, 10) || 0); guardar(); };
 $('selVistaCam').onchange = (e) => { A.vista = e.target.value; guardar(); };
-$('btnRestablecer').onclick = () => { cfg().params = { ...MODOS[A.modo].params }; guardar(); pintarSliders(); };
+$('btnRestablecer').onclick = () => {
+  cfg().params = { ...MODOS[A.modo].params };
+  if (A.modo === 'libre') cfg().colores = copiaColores();
+  guardar();
+  pintarAjustes();
+};
 
 new ResizeObserver(() => mapa.invalidar()).observe($('mapa'));
 
@@ -493,4 +559,4 @@ if (await cargarOpenCV()) {
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('./sw.js').catch(() => {});
 
 // Acceso para pruebas automáticas y depuración
-window.mesa3d = { A, mapa, osm, juego, get geojson() { return geojsonActual; }, iniciarArchivo };
+window.mesa3d = { A, mapa, osm, juego, get geojson() { return geojsonActual; }, iniciarArchivo, aplicarArea, cfg };

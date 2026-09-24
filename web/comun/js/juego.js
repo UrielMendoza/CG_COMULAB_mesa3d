@@ -9,7 +9,14 @@ import { esc, fmtKm, avisar, modal, pedirTexto, confirmar, descargar, elegirArch
 /* global L, toGeoJSON */
 
 const CLAVE = 'mesa3d-juego-v1';
-const COLOR = { hit: '#2e8b57', near: '#d08a00', miss: '#c4532d' };
+const COLOR = { hit: '#23c26b', near: '#f5a524', miss: '#ec48bd' };
+// Qué lugares de OpenStreetMap se usan en cada tipo de reto
+const RETOS = {
+  localidades: { nombre: 'Localidades', cats: ['localidades'] },
+  cerros: { nombre: 'Cerros y volcanes', cats: ['montanas'] },
+  naturaleza: { nombre: 'Parques, ríos y lagos', cats: ['parques', 'agua'] },
+  mezcla: { nombre: 'De todo un poco', cats: ['localidades', 'municipios', 'montanas', 'parques', 'agua', 'puertos'] },
+};
 const ETIQUETA = { hit: 'Dentro', near: 'Cerca', miss: 'Fuera' };
 const id = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
@@ -65,6 +72,12 @@ export class Juego {
     this.activo = v;
     if (v) { this.gObjetivos.addTo(this.map); this.gResultados.addTo(this.map); this._dibujar(); }
     else { this.map.removeLayer(this.gObjetivos); this.map.removeLayer(this.gResultados); this._setColocando(false); }
+  }
+
+  reemplazarEstado(s) {
+    this.s = { participantes: [], turno: null, objetivos: [], radio: 5, resultados: {}, mostrar: false, ...s };
+    this.gResultados.clearLayers();
+    this._guardar();
   }
 
   // ================== Participantes ==================
@@ -159,18 +172,20 @@ export class Juego {
     }
   }
 
-  async retoOSM(n) {
+  async retoOSM(n, tipo = 'localidades') {
+    const reto = RETOS[tipo] || RETOS.localidades;
     try {
-      if (!this.osm.datos.localidades) {
-        avisar('Consultando localidades en OpenStreetMap…');
-        await this.osm.cargar(['localidades']);
+      const faltan = reto.cats.filter((c) => !this.osm.datos[c]);
+      if (faltan.length) {
+        avisar('Consultando OpenStreetMap…');
+        await this.osm.cargar(faltan);
       }
-      const elegidas = this.osm.localidadesAleatorias(n);
-      if (!elegidas.length) return avisar('OSM no tiene localidades con nombre en esta área.', 'err');
+      const elegidas = this.osm.lugaresAleatorios(n, reto.cats);
+      if (!elegidas.length) return avisar('OpenStreetMap no tiene lugares con nombre de ese tipo en esta área.', 'err');
       elegidas.forEach((l) => this.s.objetivos.push({ id: id('o'), nombre: l.nombre, lat: l.lat, lng: l.lng, origen: 'osm' }));
       this.s.mostrar = false;
       this._guardar();
-      avisar(`Reto listo: ${elegidas.length} localidades de OpenStreetMap (ocultas).`, 'ok');
+      avisar(`Reto listo: ${elegidas.length} lugares de OpenStreetMap (ocultos).`, 'ok');
     } catch (e) {
       avisar(e.message, 'err');
     }
@@ -274,7 +289,7 @@ export class Juego {
     const p = this.participante;
     for (const o of this.s.objetivos) {
       const r = p ? this.s.resultados[`${o.id}|${p.id}`] : null;
-      const c = r ? COLOR[r.estado] : '#1b2330';
+      const c = r ? COLOR[r.estado] : '#5865f2';
       const ico = L.divIcon({ className: 'objetivo', html: `<span style="--c:${c}"></span>`, iconSize: [26, 26], iconAnchor: [13, 13] });
       const txt = r ? `${esc(o.nombre)} · ${fmtKm(r.km)} · ${ETIQUETA[r.estado]}` : esc(o.nombre);
       L.marker([o.lat, o.lng], { icon: ico, pmIgnore: true })
@@ -314,8 +329,9 @@ export class Juego {
           <button class="btn btn-borde" data-archivo>${icono('archivo')} Desde archivo</button>
         </div>
         <div class="reto-osm">
-          <div><b>Reto con OpenStreetMap</b><span>Elige localidades reales del área al azar.</span></div>
-          <input type="number" min="1" max="30" value="5" aria-label="Número de localidades" data-n-reto>
+          <div class="reto-titulo"><b>Reto con OpenStreetMap</b><span>Lugares reales del área, elegidos al azar.</span></div>
+          <select data-tipo-reto aria-label="Tipo de lugares">${Object.entries(RETOS).map(([k, r]) => `<option value="${k}">${r.nombre}</option>`).join('')}</select>
+          <input type="number" min="1" max="30" value="5" aria-label="Número de lugares" data-n-reto>
           <button class="btn btn-osm" data-reto>${icono('dado')} Crear</button>
         </div>
         <ul class="objetivos">${s.objetivos.map((o) => {
@@ -355,7 +371,7 @@ export class Juego {
     this.el.querySelectorAll('[data-quitar-obj]').forEach((b) => { b.onclick = () => this.quitarObjetivo(b.dataset.quitarObj); });
     q('[data-colocar]').onclick = () => { this._setColocando(!this.colocando); this.render(); };
     q('[data-archivo]').onclick = () => this.cargarArchivo();
-    q('[data-reto]').onclick = () => this.retoOSM(Math.max(1, Math.min(30, parseInt(q('[data-n-reto]').value, 10) || 5)));
+    q('[data-reto]').onclick = () => this.retoOSM(Math.max(1, Math.min(30, parseInt(q('[data-n-reto]').value, 10) || 5)), q('[data-tipo-reto]').value);
     q('[data-mostrar]').onclick = () => { this.s.mostrar = !this.s.mostrar; this._guardar(); };
     q('[data-exportar]').onclick = () => this.exportarObjetivos();
     q('[data-quitar-todos]').onclick = () => this.quitarObjetivos();

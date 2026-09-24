@@ -1,18 +1,23 @@
 // Configuración compartida por el mapa (web/mapa) y la app del celular (web/movil).
-// Presets geográficos y orientaciones se leen de config/georreferencia.json, el mismo
-// archivo que usan los detectores de la versión laptop (escritorio/).
+// Presets geográficos, orientaciones y colores de plastilina se leen de config/*.json,
+// los mismos archivos que usan los detectores de la versión laptop (escritorio/).
 
-export const RUTA_CONFIG_GEO = new URL('../../../config/georreferencia.json', import.meta.url).href;
+const RUTA_CONFIG = new URL('../../../config/', import.meta.url).href;
 
 export let PRESETS = {};
 export let ORIENTACIONES = {};
+export let COLORES = {};   // id → { nombre, hex, hsv: [[hLo,hHi],[sLo,sHi],[vLo,vHi]], activo }
+
+const limpio = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => !k.startsWith('_')));
 
 export async function cargarConfigGeo() {
-  const r = await fetch(RUTA_CONFIG_GEO, { cache: 'no-cache' });
-  const cfg = await r.json();
-  const limpio = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => !k.startsWith('_')));
-  PRESETS = limpio(cfg.presets);
-  ORIENTACIONES = limpio(cfg.orientaciones);
+  const [geo, col] = await Promise.all([
+    fetch(RUTA_CONFIG + 'georreferencia.json', { cache: 'no-cache' }).then((r) => r.json()),
+    fetch(RUTA_CONFIG + 'colores.json', { cache: 'no-cache' }).then((r) => r.json()),
+  ]);
+  PRESETS = limpio(geo.presets);
+  ORIENTACIONES = limpio(geo.orientaciones);
+  COLORES = limpio(col.colores);
 }
 
 // Zonas UTM que cubren México; cualquier otro EPSG se intenta obtener de epsg.io.
@@ -23,17 +28,16 @@ for (let zona = 11; zona <= 16; zona++) {
 }
 
 // ================== Modos ==================
-// Mismos parámetros que escritorio/detector_libre.py y escritorio/detector_juego.py
+// Mismos parámetros que escritorio/detector_libre.py y escritorio/detector_juego.py.
+// En modo libre los rangos de cada color vienen de config/colores.json.
 export const MODOS = {
   libre: {
     nombre: 'Mapeo libre',
-    desc: 'Plastilina amarilla y verde → puntos, líneas y polígonos',
+    desc: 'Plastilina de colores → puntos, líneas y polígonos',
     preset: 'guerrero_costa_chica',
-    orientacion: 'norte_arriba',
+    orientacion: 'auto',
     cruces: { blur: 3, cerrar: false, areaMin: 20, arMin: 0.3, arMax: 3.5 },
     params: {
-      YELLOW_H_LOW: 15, YELLOW_H_HIGH: 30, YELLOW_S_LOW: 105, YELLOW_S_HIGH: 255, YELLOW_V_LOW: 100, YELLOW_V_HIGH: 255,
-      GREEN_H_LOW: 35, GREEN_H_HIGH: 80, GREEN_S_LOW: 45, GREEN_S_HIGH: 255, GREEN_V_LOW: 40, GREEN_V_HIGH: 255,
       BLUE_H_LOW: 100, BLUE_H_HIGH: 130, BLUE_S_LOW: 80, BLUE_S_HIGH: 255, BLUE_V_LOW: 80, BLUE_V_HIGH: 255,
       MIN_AREA_POINT: 5, MIN_AREA_LINE: 30, MIN_LINE_LENGTH: 20, MIN_LINE_ASPECT: 4.0, MIN_AREA_POLY: 150,
       K_LONG: 11, K_SHORT: 3, MORPH_ITERS: 1,
@@ -43,7 +47,7 @@ export const MODOS = {
     nombre: 'Juego',
     desc: 'Plastilina verde → puntos; los participantes buscan los puntos de control',
     preset: 'cuenca_valle_mexico',
-    orientacion: 'norte_arriba',
+    orientacion: 'auto',
     cruces: { blur: 5, cerrar: true, areaMin: 15, arMin: 0.2, arMax: 5.0 },
     params: {
       GREEN_H_LOW: 35, GREEN_H_HIGH: 85, GREEN_S_LOW: 50, GREEN_S_HIGH: 255, GREEN_V_LOW: 50, GREEN_V_HIGH: 255,
@@ -58,11 +62,10 @@ const hsv = (pref) => [
   [`${pref}_S_LOW`, 'S bajo', 0, 255, 1], [`${pref}_S_HIGH`, 'S alto', 0, 255, 1],
   [`${pref}_V_LOW`, 'V bajo', 0, 255, 1], [`${pref}_V_HIGH`, 'V alto', 0, 255, 1],
 ];
+// Los colores de plastilina del modo libre tienen su propio editor (ver web/movil)
 export const SLIDERS = {
   libre: [
-    ['Amarillo', hsv('YELLOW')],
-    ['Verde', hsv('GREEN')],
-    ['Cruces azules', hsv('BLUE')],
+    ['Cruces y flecha (azul)', hsv('BLUE')],
     ['Puntos', [['MIN_AREA_POINT', 'Área mínima', 1, 200, 1]]],
     ['Líneas', [
       ['MIN_AREA_LINE', 'Área mínima', 5, 1000, 5],
@@ -77,8 +80,8 @@ export const SLIDERS = {
     ]],
   ],
   juego: [
-    ['Verde', hsv('GREEN')],
-    ['Cruces azules', hsv('BLUE')],
+    ['Verde (piezas)', hsv('GREEN')],
+    ['Cruces y flecha (azul)', hsv('BLUE')],
     ['Tamaño de la pieza', [
       ['MIN_AREA', 'Área mínima', 1, 500, 1],
       ['MAX_AREA', 'Área máxima', 100, 20000, 100],
@@ -90,6 +93,20 @@ export const RESOLUCIONES = [480, 640, 800, 960, 1280];
 export const DEFAULT_RESOLUCION = 960;
 export const DEFAULT_FPS = 10;
 
-// Paleta para colorear lo mapeado (la plastilina primero)
-export const PALETA = ['#e0a800', '#2e8b57', '#2458c6', '#c4532d', '#7b4bb7', '#0f8b8d', '#d6336c', '#1b2330', '#8a8f98'];
-export const COLOR_PLASTILINA = { yellow: '#e0a800', green: '#2e8b57' };
+// Paleta para colorear lo mapeado: la de la plastilina + acentos de la interfaz
+export const PALETA = ['#FF0000', '#FFA500', '#FFFF00', '#008000', '#800080', '#8B4513', '#5865f2', '#ec48bd', '#00b0f4', '#FFFFFF', '#000000'];
+
+// Nombres antiguos (versiones anteriores exportaban 'yellow' / 'green')
+const ALIAS = { yellow: 'amarillo', green: 'verde' };
+
+export function colorPlastilina(id) {
+  const c = COLORES[ALIAS[id] || id];
+  return c ? c.hex : (id && id.startsWith('#') ? id : '#5865f2');
+}
+// En femenino, porque se usa como "plastilina roja", "plastilina amarilla"…
+const FEMENINO = { rojo: 'roja', amarillo: 'amarilla', morado: 'morada', blanco: 'blanca', negro: 'negra' };
+export function nombreColor(id) {
+  const k = ALIAS[id] || id;
+  const c = COLORES[k];
+  return FEMENINO[k] || (c ? c.nombre.toLowerCase() : (id || ''));
+}

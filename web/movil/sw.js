@@ -1,15 +1,15 @@
 // Service worker: permite usar la app sin internet después de la primera visita
 // (importante en comunidades con conexión limitada). Las teselas del mapa base y las
 // consultas a OpenStreetMap sí requieren conexión; sin internet, usa "Imagen de fondo".
-const VERSION = 'mesa3d-movil-v2';
+const VERSION = 'mesa3d-movil-v3';
 
 const APP = [
   './', './index.html', './manifest.webmanifest', './js/app.js', './js/deteccion.js',
   './icons/icono.svg', './icons/icono-192.png', './icons/icono-512.png',
   '../comun/css/comun.css',
   '../comun/js/config.js', '../comun/js/geo.js', '../comun/js/mapa.js', '../comun/js/osm.js',
-  '../comun/js/juego.js', '../comun/js/paneles.js', '../comun/js/ui.js', '../comun/js/iconos.js',
-  '../../config/georreferencia.json',
+  '../comun/js/juego.js', '../comun/js/paneles.js', '../comun/js/ui.js', '../comun/js/iconos.js', '../comun/js/respaldo.js',
+  '../../config/georreferencia.json', '../../config/colores.json',
 ];
 
 // Librerías y tipografías externas: se guardan la primera vez y después se sirven desde caché

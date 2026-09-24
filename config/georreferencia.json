@@ -18,7 +18,8 @@
     }
   },
   "orientaciones": {
-    "_comentario": "Esquina geográfica que corresponde a cada cruz, en el orden de su posición real en la imagen: [arriba-izquierda, arriba-derecha, abajo-derecha, abajo-izquierda].",
+    "_comentario": "Esquina geográfica que corresponde a cada cruz, en el orden de su posición real en la imagen: [arriba-izquierda, arriba-derecha, abajo-derecha, abajo-izquierda]. 'auto' la calcula con una flecha azul apuntando al norte, colocada junto a la cruz de la esquina noreste (arriba a la derecha del mapa).",
+    "auto":            { "nombre": "Automática (flecha de norte)", "esquinas": null },
     "norte_arriba":    { "nombre": "Norte arriba",          "esquinas": ["NW", "NE", "SE", "SW"] },
     "norte_derecha":   { "nombre": "Norte a la derecha",    "esquinas": ["SW", "NW", "NE", "SE"] },
     "norte_abajo":     { "nombre": "Norte abajo",           "esquinas": ["SE", "SW", "NW", "NE"] },
