@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mesa 3D · Mapa</title>
+  <meta name="description" content="Mapa en tiempo real de la plastilina detectada sobre la mesa — COMULAB, CentroGeo" />
+  <meta name="theme-color" content="#f5f1e8" />
+  <link rel="icon" href="../movil/icons/icono.svg" type="image/svg+xml" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,650;9..144,700&family=JetBrains+Mono:wght@400;500;600&family=Public+Sans:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css" />
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.12.1/dist/proj4.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
+  <link rel="stylesheet" href="../comun/css/comun.css" />
+</head>
+<body class="pagina-mapa">
+  <aside class="lateral panel" id="lateral">
+    <div class="lateral-cab">
+      <div class="marca"><i></i><b>Mesa 3D</b><span>mapa</span></div>
+      <div class="segmento" id="segModo" role="group" aria-label="Modo">
+        <button data-modo="libre" aria-pressed="true">Mapeo libre</button>
+        <button data-modo="juego" aria-pressed="false">Juego</button>
+      </div>
+      <div class="estado-detector" id="estadoDetector"><i></i><span>Buscando al detector…</span></div>
+    </div>
+
+    <nav class="pestanas" id="pestanas" role="tablist">
+      <button data-pestana="mapeo" role="tab">Mapeo</button>
+      <button data-pestana="juego" role="tab">Juego</button>
+      <button data-pestana="osm" role="tab"><span id="icoOSM"></span>OSM</button>
+      <button data-pestana="area" role="tab">Área</button>
+    </nav>
+
+    <div class="panel-cuerpo">
+      <div data-contenido="mapeo" id="tabMapeo"></div>
+      <div data-contenido="juego" id="tabJuego"></div>
+      <div data-contenido="osm" id="tabOSM"></div>
+      <div data-contenido="area">
+        <section class="seccion">
+          <h3>Detector</h3>
+          <p class="ayuda">El mapa lee lo que escribe <code>escritorio/detector_libre.py</code> o <code>detector_juego.py</code> en <code>salidas/</code>. Si el detector está corriendo, el área y el modo se sincronizan solos.</p>
+          <label class="check"><input type="checkbox" id="chkAuto"> Actualizar automáticamente</label>
+          <button class="btn btn-borde ancho" id="btnActualizar">Actualizar detecciones ahora</button>
+        </section>
+        <section class="seccion">
+          <h3>Área de trabajo</h3>
+          <div id="formArea"></div>
+        </section>
+      </div>
+    </div>
+  </aside>
+
+  <button class="btn btn-borde btn-plegar" id="btnPanel" aria-label="Mostrar panel"></button>
+  <div id="mapa"></div>
+  <div class="banner-colocar" id="bannerColocar" hidden>Toca el mapa para colocar puntos de control <button class="btn" id="btnTerminarColocar">Terminar</button></div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

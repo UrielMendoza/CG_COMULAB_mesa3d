@@ -1,0 +1,6 @@
+# Versión laptop (escritorio/). Tkinter viene incluido con Python.
+opencv-python>=4.8
+numpy>=1.24
+geopandas>=0.14
+shapely>=2.0
+pyproj>=3.5

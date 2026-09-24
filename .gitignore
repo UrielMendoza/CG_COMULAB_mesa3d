@@ -1,2 +1,39 @@
-/ejemplos
-/Mesa3D
+# ---- Datos pesados: videos y capas geográficas (no se suben a GitHub) ----
+# Estructura local esperada: ver datos/LEEME.md
+datos/*
+!datos/LEEME.md
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.tif
+*.tiff
+*.gpkg
+*.shp
+*.shx
+*.dbf
+*.prj
+*.laz
+*.las
+
+# ---- Salidas en tiempo real de los detectores (se regeneran en cada sesión) ----
+salidas/*
+!salidas/.gitkeep
+
+# ---- Copia local opcional de OpenCV.js para la versión celular (~10 MB) ----
+web/movil/vendor/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# ---- Sistema / editores ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

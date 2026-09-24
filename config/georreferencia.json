@@ -1,0 +1,28 @@
+{
+  "_comentario": "Presets geográficos y orientaciones compartidos por la versión laptop (escritorio/) y la web (web/). bounds = [xmin, ymin, xmax, ymax] en metros del EPSG indicado. Para un área nueva, agrega un preset aquí o escribe las coordenadas a mano en la interfaz.",
+  "presets": {
+    "guerrero_costa_chica": {
+      "nombre": "Guerrero · Costa Chica",
+      "epsg": 6369,
+      "bounds": [436770.3242, 1832196.0532, 506936.9275, 1892877.8394]
+    },
+    "cuenca_valle_mexico": {
+      "nombre": "Cuenca del Valle de México · Sentinel-2",
+      "epsg": 32614,
+      "bounds": [409907, 2074280, 612270, 2184872]
+    },
+    "cuenca_valle_mexico_3d": {
+      "nombre": "Cuenca del Valle de México · modelo 3D",
+      "epsg": 32614,
+      "bounds": [416316.969, 2079317.310, 617400.705, 2256323.915]
+    }
+  },
+  "orientaciones": {
+    "_comentario": "Esquina geográfica que corresponde a cada cruz, en el orden de su posición real en la imagen: [arriba-izquierda, arriba-derecha, abajo-derecha, abajo-izquierda].",
+    "norte_arriba":    { "nombre": "Norte arriba",          "esquinas": ["NW", "NE", "SE", "SW"] },
+    "norte_derecha":   { "nombre": "Norte a la derecha",    "esquinas": ["SW", "NW", "NE", "SE"] },
+    "norte_abajo":     { "nombre": "Norte abajo",           "esquinas": ["SE", "SW", "NW", "NE"] },
+    "norte_izquierda": { "nombre": "Norte a la izquierda",  "esquinas": ["NE", "SE", "SW", "NW"] },
+    "espejo":          { "nombre": "Espejo (transpuesta)",  "esquinas": ["NW", "SW", "SE", "NE"] }
+  }
+}

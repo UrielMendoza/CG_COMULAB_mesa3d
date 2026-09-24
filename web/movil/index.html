@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Mesa 3D · Celular</title>
+  <meta name="description" content="Mapeo participativo con plastilina en tiempo real, solo con el celular — COMULAB, CentroGeo" />
+  <meta name="theme-color" content="#f5f1e8" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icono.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icons/icono-192.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,650;9..144,700&family=JetBrains+Mono:wght@400;500;600&family=Public+Sans:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css" />
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.12.1/dist/proj4.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
+  <link rel="stylesheet" href="../comun/css/comun.css" />
+</head>
+<body class="pagina-movil sin-camara">
+  <header class="barra">
+    <div class="marca"><i></i><b>Mesa 3D</b></div>
+    <div class="segmento" id="segModo" role="group" aria-label="Modo">
+      <button data-modo="libre" aria-pressed="true">Libre</button>
+      <button data-modo="juego" aria-pressed="false">Juego</button>
+    </div>
+  </header>
+
+  <main id="paneles" class="paneles" data-vista="dividida">
+    <section class="panel-camara">
+      <video id="video" playsinline muted></video>
+      <canvas id="lienzo"></canvas>
+      <div class="estado-camara" id="estadoCamara" hidden></div>
+
+      <div id="inicio" class="inicio">
+        <div class="cruces" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <h1>Mapea con plastilina, solo con tu celular</h1>
+        <p>Pon cuatro cruces azules en las esquinas del mapa, la maqueta o la imagen impresa, y apunta la cámara desde arriba.</p>
+        <p id="estadoOpenCV" class="estado-cv">Preparando la visión por computadora (≈9 MB, solo la primera vez)…</p>
+        <button id="btnCamara" class="btn btn-azul" disabled></button>
+        <button id="btnVideo" class="btn btn-borde"></button>
+        <p id="avisoSeguro" class="aviso-seguro" hidden>La cámara solo funciona si la página se abre con <b>https://</b> (por ejemplo desde GitHub Pages) o desde <b>localhost</b>.</p>
+      </div>
+    </section>
+
+    <section class="panel-mapa"><div id="mapa"></div></section>
+  </main>
+
+  <nav class="acciones">
+    <button id="btnCalibrar" class="accion principal" disabled></button>
+    <button id="btnPausa" class="accion" disabled></button>
+    <button id="btnVista" class="accion"></button>
+    <button id="btnGuardar" class="accion"></button>
+    <button id="btnPanel" class="accion"></button>
+  </nav>
+
+  <aside class="hoja panel" id="hoja" aria-label="Panel">
+    <div class="hoja-asa"><h2>Panel</h2><button class="btn-icono" id="btnCerrarHoja" aria-label="Cerrar"></button></div>
+    <nav class="pestanas" role="tablist">
+      <button data-pestana="camara" role="tab">Cámara</button>
+      <button data-pestana="mapeo" role="tab">Mapeo</button>
+      <button data-pestana="juego" role="tab">Juego</button>
+      <button data-pestana="osm" role="tab"><span id="icoOSM"></span>OSM</button>
+    </nav>
+    <div class="panel-cuerpo">
+      <div data-contenido="camara">
+        <section class="seccion">
+          <h3>Área de trabajo</h3>
+          <div id="formArea"></div>
+        </section>
+        <section class="seccion">
+          <h3>Cámara</h3>
+          <label class="campo">Cámara <select id="selCamara"><option value="">Trasera (automática)</option></select></label>
+          <div class="rejilla-2">
+            <label class="campo">Resolución de análisis <select id="selResolucion"></select></label>
+            <label class="campo">Cuadros por segundo <input id="inpFps" type="number" min="1" max="30" step="1"></label>
+          </div>
+          <label class="campo">Ver en pantalla
+            <select id="selVistaCam">
+              <option value="deteccion">Detección</option>
+              <option value="yellow">Máscara amarilla</option>
+              <option value="green">Máscara verde</option>
+              <option value="blue">Máscara azul (cruces)</option>
+            </select>
+          </label>
+          <label class="campo">Recalibrar solo cada N cuadros (0 = solo con el botón) <input id="inpRecalib" type="number" min="0" step="1"></label>
+          <button id="btnDetener" class="btn btn-borde ancho">Detener cámara o video</button>
+        </section>
+        <section class="seccion">
+          <h3>Colores y tamaños</h3>
+          <p class="ayuda">Si la impresión tiene zonas del mismo color que la plastilina, sube “S bajo”: la plastilina es más saturada que el papel.</p>
+          <div id="sliders"></div>
+          <button id="btnRestablecer" class="btn btn-borde ancho">Restablecer valores</button>
+        </section>
+      </div>
+      <div data-contenido="mapeo" id="tabMapeo"></div>
+      <div data-contenido="juego" id="tabJuego"></div>
+      <div data-contenido="osm" id="tabOSM"></div>
+    </div>
+  </aside>
+
+  <div class="banner-colocar" id="bannerColocar" hidden>Toca el mapa para colocar puntos de control <button class="btn" id="btnTerminarColocar">Terminar</button></div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
