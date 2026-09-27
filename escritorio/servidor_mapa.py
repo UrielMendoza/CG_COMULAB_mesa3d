@@ -72,7 +72,7 @@ def abrir(pagina='mapa'):
 
 if __name__ == '__main__':
     url = abrir(sys.argv[1] if len(sys.argv) > 1 else 'mapa')
-    print(f'Mesa 3D en {url}  (Ctrl+C para terminar)')
+    print(f'Cartografía sensorial en {url}  (Ctrl+C para terminar)')
     try:
         threading.Event().wait()
     except KeyboardInterrupt:

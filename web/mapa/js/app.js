@@ -8,10 +8,11 @@ import { Juego } from '../../comun/js/juego.js';
 import { panelMapeo, panelOSM, formularioArea } from '../../comun/js/paneles.js';
 import { icono } from '../../comun/js/iconos.js';
 import { $, avisar, almacen, pestanas } from '../../comun/js/ui.js';
+import { montarSinConexion } from '../../comun/js/sinconexion.js';
 
 const SALIDAS = new URL('../../../salidas/', import.meta.url).href;
 const ARCHIVOS = ['detecciones_puntos.geojson', 'detecciones_lineas.geojson', 'detecciones_poligonos.geojson'];
-const CLAVE = 'mesa3d-mapa-ajustes-v1';
+const CLAVE = 'mesa3d-mapa-ajustes-v2';
 
 await cargarConfigGeo();
 
@@ -37,6 +38,7 @@ mapa.alCambiar = pMapeo.render;
 mapa.alCambiarVivo = pMapeo.vivo;
 panelOSM($('tabOSM'), osm, mapa);
 juego.montar($('tabJuego'));
+montarSinConexion($('sinConexion'), { osm });
 $('btnTerminarColocar').onclick = () => juego.terminarColocar();
 
 const llenarArea = formularioArea($('formArea'), A.area, async (area) => {
@@ -122,5 +124,8 @@ await leerDetecciones();
 setInterval(() => { if (A.auto) leerDetecciones(); }, 1500);
 setInterval(revisarSesion, 4000);
 if (window.matchMedia('(min-width: 821px)').matches) document.body.classList.add('panel-abierto');
+
+// Service worker común de la web: abre rápido con red lenta y permite usar el mapa sin internet
+if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('../sw.js').catch(() => {});
 
 window.mesa3d = { mapa, osm, juego, A };

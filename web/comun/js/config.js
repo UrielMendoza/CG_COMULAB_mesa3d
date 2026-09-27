@@ -34,7 +34,7 @@ export const MODOS = {
   libre: {
     nombre: 'Mapeo libre',
     desc: 'Plastilina de colores → puntos, líneas y polígonos',
-    preset: 'guerrero_costa_chica',
+    preset: 'cuenca_valle_mexico',
     orientacion: 'auto',
     cruces: { blur: 3, cerrar: false, areaMin: 20, arMin: 0.3, arMax: 3.5 },
     params: {

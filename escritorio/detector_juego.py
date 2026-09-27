@@ -279,24 +279,26 @@ def run_pipeline(video_source, src_type, show_mode, scale, video_speed, recalib_
                 for (cx, cy) in all_centroids:
                     ix, iy = int(cx) - xoff, int(cy) - yoff
                     if 0 <= ix < display.shape[1] and 0 <= iy < display.shape[0]:
-                        cv2.drawMarker(display, (ix, iy), (242, 101, 88), markerType=cv2.MARKER_CROSS, markerSize=16, thickness=2)
+                        # gris mientras faltan cruces, verde cuando se ven las 4
+                        color_cruz = (126, 237, 53) if num_crosses_found >= 4 else (180, 180, 180)
+                        cv2.drawMarker(display, (ix, iy), color_cruz, markerType=cv2.MARKER_CROSS, markerSize=16, thickness=2)
                 if dbg['flecha']:
                     (fx, fy), d = dbg['flecha']
                     p0 = (int(fx) - xoff, int(fy) - yoff)
-                    cv2.arrowedLine(display, p0, (int(p0[0] + d[0] * 40), int(p0[1] + d[1] * 40)), (189, 72, 236), 2, tipLength=0.4)
+                    cv2.arrowedLine(display, p0, (int(p0[0] + d[0] * 40), int(p0[1] + d[1] * 40)), (126, 237, 53), 2, tipLength=0.4)
                 if corners is not None:
                     pts_draw = corners.astype(int)
                     for i in range(4):
                         p1 = (pts_draw[i][0] - xoff, pts_draw[i][1] - yoff)
                         p2 = (pts_draw[(i + 1) % 4][0] - xoff, pts_draw[(i + 1) % 4][1] - yoff)
-                        cv2.line(display, p1, p2, (242, 101, 88), 1, cv2.LINE_AA)
+                        cv2.line(display, p1, p2, (126, 237, 53), 1, cv2.LINE_AA)
                 cv2.putText(display, f"PUNTOS VERDES: {green_count}", (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (126, 237, 53), 1, cv2.LINE_AA)
                 if calibrated:
                     cv2.putText(display, f"CALIBRADO | Cruces: {num_crosses_found}/4", (10, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (126, 237, 53), 1, cv2.LINE_AA)
                 else:
-                    cv2.putText(display, "SIN CALIBRACION - Presiona 'Calibrar'", (10, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 140, 255), 1, cv2.LINE_AA)
+                    cv2.putText(display, "SIN CALIBRACION - Presiona 'Calibrar'", (10, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1, cv2.LINE_AA)
                     cv2.putText(display, f"Cruces visibles: {num_crosses_found}/4", (10, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
-                                (126, 237, 53) if num_crosses_found >= 4 else (0, 140, 255), 1, cv2.LINE_AA)
+                                (126, 237, 53) if num_crosses_found >= 4 else (180, 180, 180), 1, cv2.LINE_AA)
                 draw_small("JUEGO - Deteccion", display, scale)
 
             if calibrated:
@@ -318,7 +320,7 @@ def run_pipeline(video_source, src_type, show_mode, scale, video_speed, recalib_
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Mesa 3D · Detector del juego")
+        self.title("Cartografía sensorial · Detector del juego")
         self.geometry("860x820")
         self.minsize(800, 720)
         aplicar_estilo(self)
@@ -402,7 +404,7 @@ class App(tk.Tk):
 
     def _refrescar_estado(self):
         e = self.estado.get()
-        self.lbl_estado.config(text=e["texto"], foreground=C['verde'] if e["ok"] else C['magenta'])
+        self.lbl_estado.config(text=e["texto"], foreground=C['verde'] if e["ok"] else C['tenue'])
         self._id_estado = self.after(400, self._refrescar_estado)
 
     def _abrir_mapa(self):

@@ -1,12 +1,12 @@
 {
-  "_comentario": "Colores de plastilina que se detectan en el modo de mapeo libre (versión laptop y web). hsv = [[H bajo, H alto], [S bajo, S alto], [V bajo, V alto]] en la escala de OpenCV (H 0-179, S y V 0-255). Si H bajo > H alto el rango da la vuelta (el rojo va de 170 a 7). El AZUL no aparece: está reservado para las cruces y la flecha de norte. Blanco y negro vienen apagados porque se confunden con el papel y las sombras; actívalos solo sobre fondos de color.",
+  "_comentario": "Colores de plastilina que se detectan en el modo de mapeo libre (versión laptop y web). hsv = [[H bajo, H alto], [S bajo, S alto], [V bajo, V alto]] en la escala de OpenCV (H 0-179, S y V 0-255). Si H bajo > H alto el rango da la vuelta (el rojo va de 170 a 7). El AZUL no aparece: está reservado para las cruces y la flecha de norte. Por defecto solo están activos verde, amarillo y rojo (los más fáciles de distinguir); los demás se activan desde la interfaz. Blanco y negro se confunden con el papel y las sombras: úsalos solo sobre fondos de color.",
   "colores": {
-    "rojo":     { "nombre": "Rojo",     "hex": "#FF0000", "hsv": [[170, 7],   [120, 255], [70, 255]],  "activo": true },
-    "naranja":  { "nombre": "Naranja",  "hex": "#FFA500", "hsv": [[8, 21],    [120, 255], [150, 255]], "activo": true },
-    "amarillo": { "nombre": "Amarillo", "hex": "#FFFF00", "hsv": [[22, 34],   [100, 255], [120, 255]], "activo": true },
     "verde":    { "nombre": "Verde",    "hex": "#008000", "hsv": [[35, 85],   [45, 255],  [40, 255]],  "activo": true },
-    "morado":   { "nombre": "Morado",   "hex": "#800080", "hsv": [[136, 168], [60, 255],  [40, 255]],  "activo": true },
-    "cafe":     { "nombre": "Café",     "hex": "#8B4513", "hsv": [[5, 20],    [90, 255],  [40, 149]],  "activo": true },
+    "amarillo": { "nombre": "Amarillo", "hex": "#FFFF00", "hsv": [[22, 34],   [100, 255], [120, 255]], "activo": true },
+    "rojo":     { "nombre": "Rojo",     "hex": "#FF0000", "hsv": [[170, 7],   [120, 255], [70, 255]],  "activo": true },
+    "naranja":  { "nombre": "Naranja",  "hex": "#FFA500", "hsv": [[8, 21],    [120, 255], [150, 255]], "activo": false },
+    "morado":   { "nombre": "Morado",   "hex": "#800080", "hsv": [[136, 168], [60, 255],  [40, 255]],  "activo": false },
+    "cafe":     { "nombre": "Café",     "hex": "#8B4513", "hsv": [[5, 20],    [90, 255],  [40, 149]],  "activo": false },
     "blanco":   { "nombre": "Blanco",   "hex": "#FFFFFF", "hsv": [[0, 179],   [0, 35],    [215, 255]], "activo": false },
     "negro":    { "nombre": "Negro",    "hex": "#000000", "hsv": [[0, 179],   [0, 255],   [0, 45]],    "activo": false }
   }

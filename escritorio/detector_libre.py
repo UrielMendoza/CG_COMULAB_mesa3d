@@ -36,7 +36,7 @@ import servidor_mapa
 
 # ================== CONFIG DEFAULT ==================
 
-DEFAULT_PRESET = "guerrero_costa_chica"
+DEFAULT_PRESET = "cuenca_valle_mexico"
 # 'norte_arriba' reproduce exactamente el mapeo de la v7; 'auto' usa la flecha de norte si la ve
 DEFAULT_ORIENTACION = "auto"
 
@@ -339,10 +339,10 @@ def run_pipeline(video_source, src_type, show_mode, scale, video_speed, recalib_
                         if show_mode == 2:
                             dbg_frame = frame.copy()
                             for (x, y) in corners_img2.astype(int):
-                                cv2.drawMarker(dbg_frame, (x, y), (255, 0, 0), markerType=cv2.MARKER_CROSS, markerSize=18, thickness=2)
+                                cv2.drawMarker(dbg_frame, (x, y), (126, 237, 53), markerType=cv2.MARKER_CROSS, markerSize=18, thickness=2)
                             if dbg['flecha']:
                                 (fx, fy), d = dbg['flecha']
-                                cv2.arrowedLine(dbg_frame, (int(fx), int(fy)), (int(fx + d[0] * 60), int(fy + d[1] * 60)), (0, 0, 255), 3)
+                                cv2.arrowedLine(dbg_frame, (int(fx), int(fy)), (int(fx + d[0] * 60), int(fy + d[1] * 60)), (126, 237, 53), 3)
                             draw_small("Cruces Azules Detectadas", dbg_frame, scale)
                             draw_small("Mascara Azul (cruces)", cv2.cvtColor(dbg["mask_blue"], cv2.COLOR_GRAY2BGR), scale)
                             cv2.waitKey(150)
@@ -375,9 +375,9 @@ def run_pipeline(video_source, src_type, show_mode, scale, video_speed, recalib_
             if show_mode >= 1 and not calibrated:
                 overlay = frame_in.copy()
                 cv2.putText(overlay, "SIN CALIBRACION - Presiona 'Calibrar'", (20, 40),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 140, 255), 2, cv2.LINE_AA)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 2, cv2.LINE_AA)
                 cv2.putText(overlay, "(Detectando sin georreferencia)", (20, 70),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 140, 255), 1, cv2.LINE_AA)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
                 draw_small("SISTEMA DE DETECCION (recorte)", overlay, scale)
 
             if calibrated:
@@ -396,7 +396,7 @@ def run_pipeline(video_source, src_type, show_mode, scale, video_speed, recalib_
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Mesa 3D · Detector de mapeo libre")
+        self.title("Cartografía sensorial · Detector de mapeo libre")
         self.geometry("880x880")
         self.minsize(820, 760)
         aplicar_estilo(self)
@@ -493,7 +493,7 @@ class App(tk.Tk):
 
     def _refrescar_estado(self):
         e = self.estado.get()
-        self.lbl_estado.config(text=e["texto"], foreground=C['verde'] if e["ok"] else C['magenta'])
+        self.lbl_estado.config(text=e["texto"], foreground=C['verde'] if e["ok"] else C['tenue'])
         self._id_estado = self.after(400, self._refrescar_estado)
 
     def _detect_cameras(self):

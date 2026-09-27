@@ -1,4 +1,4 @@
-# Mesa 3D — Mapeo participativo con plastilina en tiempo real
+# Cartografía sensorial — Mapeo participativo con plastilina en tiempo real
 
 <p align="center">
   <a href="https://urielmendoza.github.io/CG_COMULAB_mesa3d/web/movil/"><img alt="Abrir la app del celular" src="https://img.shields.io/badge/%E2%96%B6%20Abrir%20la%20app%20del%20celular-35ed7e?style=for-the-badge&labelColor=0a0d3a"></a>
@@ -44,17 +44,17 @@ La app del celular se abre en Chrome (Android) o Safari (iPhone) y pide permiso 
 
 | Color | Muestra | Uso |
 |---|---|---|
-| Rojo `#FF0000` | 🟥 | activo |
-| Naranja `#FFA500` | 🟧 | activo |
-| Amarillo `#FFFF00` | 🟨 | activo |
-| Verde `#008000` | 🟩 | activo (es el color del juego) |
-| Morado `#800080` | 🟪 | activo |
-| Café `#8B4513` | 🟫 | activo |
+| Verde `#008000` | 🟩 | **activo** (es también el color del juego) |
+| Amarillo `#FFFF00` | 🟨 | **activo** |
+| Rojo `#FF0000` | 🟥 | **activo** |
+| Naranja `#FFA500` | 🟧 | apagado; se activa en la interfaz |
+| Morado `#800080` | 🟪 | apagado; se activa en la interfaz |
+| Café `#8B4513` | 🟫 | apagado; se activa en la interfaz |
 | Blanco `#FFFFFF` | ⬜ | apagado: se confunde con el papel |
 | Negro `#000000` | ⬛ | apagado: se confunde con las sombras |
 | **Azul** | 🟦 | **reservado para las cruces y la flecha de norte** |
 
-Cada pieza se clasifica como **punto, línea o polígono** según su forma. Los rangos de color están en [`config/colores.json`](config/colores.json) y se calibran desde la ventana del detector (pestaña *Colores*, botón *Guardar*) o desde la app del celular (*Panel → Cámara → Colores y tamaños*).
+Por defecto solo se detectan **verde, amarillo y rojo**, los más fáciles de distinguir entre sí. Cada pieza se clasifica como **punto, línea o polígono** según su forma. Los rangos de color están en [`config/colores.json`](config/colores.json) y se calibran desde la ventana del detector (pestaña *Colores*, botón *Guardar*) o desde la app del celular (*Panel → Cámara → Colores y tamaños*).
 
 ### Dos versiones, el mismo sistema
 
@@ -87,6 +87,7 @@ Las dos versiones usan los mismos colores, la misma clasificación, la misma geo
 │   └── legacy/                 Primeras versiones (referencia histórica)
 ├── web/
 │   ├── comun/                  Mapa, OSM, juego, paneles, respaldo y estilos (compartido)
+│   │   ├── vendor/             Leaflet, Geoman, proj4 y togeojson (servidos desde el mismo sitio)
 │   │   └── datos_osm/          Datos OSM pre-descargados por área
 │   ├── mapa/                   ▶ Mapa web
 │   └── movil/                  ▶ App del celular (cámara + detección + mapa)
@@ -176,6 +177,7 @@ Todo corre en el navegador del celular: cámara trasera, detección, calibració
    - **Panel**: pestañas de cámara, mapeo, juego y OSM.
 
 Consejos:
+- **Datos móviles**: la app abre aunque la conexión sea lenta. La primera vez descarga la visión por computadora (OpenCV, ~10 MB) y muestra el avance; si un servidor no responde, prueba otro solo. Desde la segunda vez abre desde lo guardado en el celular.
 - **Proyectar**: usa la función de duplicar pantalla del celular (Smart View, Chromecast, AirPlay).
 - **Rendimiento**: en celulares modestos, baja la resolución de análisis (640 px) o los cuadros por segundo (5).
 - **Desarrollo o uso en la laptop**: `python escritorio/servidor_mapa.py movil` abre la app en `localhost`, que tiene permiso de cámara.
@@ -221,6 +223,23 @@ En **Mapeo → Tus datos**:
 - **Descargar respaldo** baja un archivo `.json` con todo. Sirve para guardarlo, compartirlo o pasarlo a otro equipo.
 - **Cargar respaldo** lo restaura en cualquier dispositivo.
 
+### Usar sin internet
+
+En la app del celular (**Panel → Cámara → Usar sin internet**) y en el mapa web (**Área → Usar sin internet**) hay un botón **Descargar para usar sin internet**. No descarga nada hasta que lo presionas.
+
+Antes de descargar pregunta si estás seguro y muestra:
+- qué se guarda y cuánto ocupa cada cosa:
+  - la aplicación y sus librerías, ≈ 0.9 MB;
+  - OpenCV, ≈ 10 MB (solo en el celular);
+  - los datos OSM del área, 0.05–1.3 MB;
+- el total;
+- el espacio libre disponible;
+- **dónde se guarda**: en el almacenamiento interno del navegador del dispositivo (datos del sitio). No aparece en Descargas ni en la galería.
+
+El **mapa base** no se descarga de golpe porque OpenStreetMap no lo permite. En la misma ventana eliges un límite (50, 150 o 300 MB). Cada zona que recorras en el mapa mientras tengas internet queda guardada y se ve después sin conexión. Sin internet también puedes usar una **imagen de fondo** del área.
+
+**Borrar lo descargado** libera ese espacio. Tu mapeo, tus notas y el juego no se borran.
+
 Para usar la plataforma **totalmente local**, sin depender de GitHub:
 1. Descarga el repositorio (**Code → Download ZIP**).
 2. Ejecuta `python escritorio/servidor_mapa.py`.
@@ -229,7 +248,7 @@ Para usar la plataforma **totalmente local**, sin depender de GitHub:
 
 ## OpenStreetMap en el centro
 
-OpenStreetMap (OSM) es el mapa colaborativo del mundo. Además de ser el mapa base, la plataforma **consulta su base de datos** dentro del área de trabajo:
+OpenStreetMap (OSM) es el mapa colaborativo del mundo. Además de ser el mapa base, la plataforma **consulta su base de datos** dentro del área de trabajo. Los datos OSM **solo se cargan cuando presionas «Consultar datos OSM del área»** (pestaña OSM); antes no aparecen en el mapa.
 
 | Categoría | Qué incluye | Visible al inicio |
 |---|---|---|
@@ -248,7 +267,10 @@ Con esos datos la plataforma ofrece:
 - Un **buscador** de lugares.
 - **Retos del juego** con lugares reales: localidades, cerros, naturaleza o una mezcla.
 
-**Datos pre-descargados.** Los servidores públicos de OSM (Overpass) se saturan seguido, sobre todo con áreas grandes, y responden `504`. Por eso las áreas incluidas traen sus datos en `web/comun/datos_osm/`, y la plataforma los carga al instante y sin internet. Para un área nueva, agrégala a `config/georreferencia.json` y ejecuta una vez:
+**De dónde salen los datos al consultar**, en este orden:
+1. la copia ya guardada en el dispositivo;
+2. los **datos incluidos con la plataforma** para las áreas predefinidas (`web/comun/datos_osm/`), que cargan al instante y sin internet;
+3. solo si no hay ninguno de los dos, la consulta en vivo a los servidores públicos de OSM (Overpass), que se saturan seguido y pueden responder `504`. Para un área nueva, agrégala a `config/georreferencia.json` y ejecuta una vez:
 
 ```bash
 python escritorio/herramientas/descargar_osm.py mi_area
@@ -282,6 +304,8 @@ Datos © colaboradores de OpenStreetMap, licencia ODbL. Si algo de la comunidad 
 
 Las áreas están en [`config/georreferencia.json`](config/georreferencia.json). Las usan Python y la web; agrega ahí las tuyas.
 
+El área por defecto es **Cuenca del Valle de México · Sentinel-2**.
+
 | Área | EPSG | xmin | ymin | xmax | ymax |
 |---|---|---|---|---|---|
 | Guerrero · Costa Chica | 6369 | 436770.3242 | 1832196.0532 | 506936.9275 | 1892877.8394 |
@@ -300,8 +324,8 @@ La web reconoce sin conexión las zonas UTM 11N a 16N (WGS84: 32611–32616; ITR
 
 ## Diseño
 
-Las interfaces (web y ventanas de escritorio) comparten un sistema visual:
-- lienzo índigo profundo con degradado blurple → magenta;
+Las interfaces (web y ventanas de escritorio) comparten un sistema visual oscuro con **colores sólidos, sin degradados**:
+- fondo índigo profundo;
 - botones blurple para la acción principal, verde eléctrico para la de más intención (usar la cámara, iniciar, verificar turno, descargar respaldo) y magenta para acentos;
 - títulos en Hanken Grotesk 800 en mayúsculas y texto en Inter.
 

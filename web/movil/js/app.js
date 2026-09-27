@@ -10,6 +10,7 @@ import { panelMapeo, panelOSM, formularioArea } from '../../comun/js/paneles.js'
 import { icono } from '../../comun/js/iconos.js';
 import { $, esc, avisar, almacen, pestanas, elegirArchivo } from '../../comun/js/ui.js';
 import { buscarCruces, detectarMesa, detectarJuego, aGeoJSON } from './deteccion.js';
+import { montarSinConexion } from '../../comun/js/sinconexion.js';
 
 // Orden de carga: copia local opcional (web/movil/vendor/opencv.js) → CDN npm → sitio oficial de OpenCV
 const FUENTES_OPENCV = [
@@ -17,7 +18,8 @@ const FUENTES_OPENCV = [
   'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
   'https://docs.opencv.org/4.9.0/opencv.js',
 ];
-const CLAVE = 'mesa3d-movil-ajustes-v3';
+// v4: nuevos valores por defecto (Valle de México; solo verde, amarillo y rojo activos)
+const CLAVE = 'mesa3d-movil-ajustes-v4';
 
 await cargarConfigGeo();
 
@@ -78,6 +80,8 @@ mapa.alCambiar = pMapeo.render;
 mapa.alCambiarVivo = pMapeo.vivo;
 panelOSM($('tabOSM'), osm, mapa);
 juego.montar($('tabJuego'));
+// Descarga para usar sin internet: OpenCV se guarda con la misma dirección con que se carga
+montarSinConexion($('sinConexion'), { osm, opencv: FUENTES_OPENCV[1] });
 const activarPestana = pestanas($('hoja'));
 
 $('icoOSM').innerHTML = icono('globo');
@@ -121,13 +125,56 @@ function esperarRuntime(timeoutMs = 60000) {
   });
 }
 
+// Descarga con progreso visible: en datos móviles OpenCV (~10 MB) tarda; si dejan de llegar
+// datos durante 20 s se abandona esa fuente y se prueba la siguiente.
+const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function descargarConProgreso(url, alProgreso, estancadoMs = 20000) {
+  const ctl = new AbortController();
+  let reloj = setTimeout(() => ctl.abort(), estancadoMs);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const lector = r.body.getReader();
+    const partes = [];
+    let n = 0;
+    for (;;) {
+      const { done, value } = await lector.read();
+      if (done) break;
+      partes.push(value);
+      n += value.length;
+      clearTimeout(reloj);
+      reloj = setTimeout(() => ctl.abort(), estancadoMs);
+      alProgreso(n);
+    }
+    return URL.createObjectURL(new Blob(partes, { type: 'text/javascript' }));
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
 async function cargarOpenCV() {
-  for (const src of FUENTES_OPENCV) {
+  const estado = $('estadoOpenCV');
+  for (const [i, src] of FUENTES_OPENCV.entries()) {
     try {
-      await cargarScript(src);
+      if (src.startsWith('https://docs.opencv.org')) {
+        // Este servidor no permite fetch (CORS): se carga como <script>, con límite de tiempo
+        estado.textContent = 'Descargando visión por computadora desde otro servidor…';
+        await Promise.race([cargarScript(src), esperar(180000).then(() => { throw new Error('tiempo agotado'); })]);
+      } else {
+        const url = await descargarConProgreso(src, (n) => {
+          const mb = n / 1048576;
+          estado.textContent = `Descargando visión por computadora: ${mb.toFixed(1)} de ~10 MB (solo la primera vez)`;
+        });
+        estado.textContent = 'Preparando la visión por computadora…';
+        await cargarScript(url);
+      }
       cv = await esperarRuntime();
       return true;
-    } catch (_) { /* siguiente fuente */ }
+    } catch (_) {
+      // La copia local es opcional: que no exista no significa que la conexión esté mal
+      if (i < FUENTES_OPENCV.length - 1 && !src.startsWith('./')) estado.textContent = 'La conexión está lenta; probando otro servidor…';
+    }
   }
   return false;
 }
@@ -372,16 +419,18 @@ function dibujarEstado({ cruces, calibrado, stats, pausa }) {
   }
   const m = lw * 5;
   ctx.lineWidth = lw * 1.2;
-  ctx.strokeStyle = '#8f98ff';
+  // Gris mientras faltan cruces; verde cuando se ven las 4
+  const listo = cruces.centroides.length >= 4;
+  ctx.strokeStyle = listo ? '#35ed7e' : '#b5bac1';
   for (const [x, y] of cruces.centroides) {
     ctx.beginPath(); ctx.moveTo(x - m, y); ctx.lineTo(x + m, y); ctx.moveTo(x, y - m); ctx.lineTo(x, y + m); ctx.stroke();
   }
-  if (cruces.corners) { ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(143,152,255,0.85)'; trazo(cruces.corners, true); }
+  if (cruces.corners) { ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(53,237,126,0.8)'; trazo(cruces.corners, true); }
   if (cruces.flecha) {
     // Flecha de norte reconocida: se dibuja su dirección en magenta
     const { c: [fx, fy], d: [dx, dy] } = cruces.flecha;
     const L = lw * 22, tx = fx + dx * L, ty = fy + dy * L;
-    ctx.strokeStyle = '#ec48bd'; ctx.fillStyle = '#ec48bd'; ctx.lineWidth = lw * 1.5;
+    ctx.strokeStyle = '#35ed7e'; ctx.fillStyle = '#35ed7e'; ctx.lineWidth = lw * 1.5;
     ctx.beginPath(); ctx.moveTo(fx - dx * L * 0.4, fy - dy * L * 0.4); ctx.lineTo(tx, ty); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(tx, ty);
     ctx.lineTo(tx - dx * lw * 6 - dy * lw * 4, ty - dy * lw * 6 + dx * lw * 4);
@@ -399,8 +448,8 @@ function dibujarEstado({ cruces, calibrado, stats, pausa }) {
   const n = cruces.centroides.length;
   const pildoras = [calibrado
     ? '<span class="pildora calibrado"><i></i>Calibrado</span>'
-    : `<span class="pildora" style="--c:${n >= 4 ? '#8f98ff' : '#ec48bd'}"><i></i>Cruces ${Math.min(n, 4)}/4${n > 4 ? ` (+${n - 4})` : ''}</span>`];
-  if (c_orientacionAuto()) pildoras.push(`<span class="pildora" style="--c:${cruces.flecha ? '#35ed7e' : '#ec48bd'}"><i></i>${cruces.flecha ? 'Flecha N' : 'Sin flecha N'}</span>`);
+    : `<span class="pildora" style="--c:${n >= 4 ? '#35ed7e' : '#8b90b8'}"><i></i>Cruces ${Math.min(n, 4)}/4${n > 4 ? ` (+${n - 4})` : ''}</span>`];
+  if (c_orientacionAuto()) pildoras.push(`<span class="pildora" style="--c:${cruces.flecha ? '#35ed7e' : '#8b90b8'}"><i></i>${cruces.flecha ? 'Flecha N' : 'Sin flecha N'}</span>`);
   if (stats) {
     const tot = Object.entries(stats).filter(([, s]) => s.point + (s.line || 0) + (s.polygon || 0) > 0);
     for (const [col, s] of tot) {

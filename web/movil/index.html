@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Mesa 3D · Celular</title>
+  <title>Cartografía sensorial · Celular</title>
   <meta name="description" content="Mapeo participativo con plastilina en tiempo real, solo con el celular — COMULAB, CentroGeo" />
   <meta name="theme-color" content="#0a0d3a" />
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -12,18 +12,20 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css" />
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/proj4@2.12.1/dist/proj4.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
+  <!-- Tipografías sin bloquear: si no cargan (datos móviles lentos) se usa la del sistema -->
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" onload="this.onload=null;this.rel='stylesheet'" />
+  <!-- Librerías servidas desde el mismo sitio (no dependen de un CDN externo) -->
+  <link rel="stylesheet" href="../comun/vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="../comun/vendor/geoman/leaflet-geoman.css" />
+  <script src="../comun/vendor/leaflet/leaflet.js"></script>
+  <script src="../comun/vendor/geoman/leaflet-geoman.js"></script>
+  <script src="../comun/vendor/proj4.js"></script>
+  <script src="../comun/vendor/togeojson.umd.js"></script>
   <link rel="stylesheet" href="../comun/css/comun.css" />
 </head>
 <body class="pagina-movil sin-camara">
   <header class="barra">
-    <div class="marca"><i></i><b>Mesa 3D</b></div>
+    <div class="marca"><i></i><b>Cartografía<br>sensorial</b></div>
     <div class="segmento" id="segModo" role="group" aria-label="Modo">
       <button data-modo="libre" aria-pressed="true">Libre</button>
       <button data-modo="juego" aria-pressed="false">Juego</button>
@@ -96,6 +98,7 @@
           <div id="sliders"></div>
           <button id="btnRestablecer" class="btn btn-borde ancho">Restablecer valores</button>
         </section>
+        <div id="sinConexion"></div>
       </div>
       <div data-contenido="mapeo" id="tabMapeo"></div>
       <div data-contenido="juego" id="tabJuego"></div>

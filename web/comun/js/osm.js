@@ -134,31 +134,23 @@ export class ContextoOSM {
     this.errores = {};
     this.fecha = null;
     this.predescargado = null;
+    this.preset = preset && preset !== 'personalizado' ? preset : null;
+    this._archivo = undefined;
     Object.values(this.capas).forEach((c) => { c.clearLayers(); this.map.removeLayer(c); });
-    // 1) Lo que ya se consultó antes en este dispositivo se carga sin internet
-    for (const cat of Object.keys(CATEGORIAS)) {
-      const g = almacen.leer(this._clave(cat), null);
-      if (g) this._usar(cat, g);
-    }
+    // Nada se carga solo: los datos OSM aparecen hasta que se presiona "Consultar OSM"
     this.alCambiar();
-    // 2) Para las áreas incluidas en el repositorio, el resto viene del archivo pre-descargado
-    if (preset && preset !== 'personalizado') this._cargarPredescargado(preset, nuevo);
   }
 
-  async _cargarPredescargado(preset, bbox) {
+  // Datos pre-descargados del área (web/comun/datos_osm/<area>.json), o null si no hay
+  async _predescargado() {
+    if (this._archivo !== undefined) return this._archivo;
+    this._archivo = null;
+    if (!this.preset) return null;
     try {
-      const r = await fetch(`${RUTA_DATOS}${preset}.json`);
-      if (!r.ok) return;
-      const d = await r.json();
-      if (this.bbox !== bbox) return; // el área cambió mientras se descargaba
-      let n = 0;
-      for (const [cat, g] of Object.entries(d.categorias || {})) {
-        if (!CATEGORIAS[cat] || this.datos[cat]) continue;
-        this._usar(cat, g);
-        n++;
-      }
-      if (n) { this.predescargado = d.fecha; this.alCambiar(); }
-    } catch (_) { /* sin archivo o sin conexión: se puede consultar en vivo */ }
+      const r = await fetch(`${RUTA_DATOS}${this.preset}.json`);
+      if (r.ok) this._archivo = await r.json();
+    } catch (_) { /* sin archivo o sin conexión */ }
+    return this._archivo;
   }
 
   _clave(cat) { return `${CLAVE_CACHE}${this.bbox.join(',')}|${cat}|${this.grande ? 'g' : 'c'}`; }
@@ -167,8 +159,13 @@ export class ContextoOSM {
   async cargar(cats = Object.keys(CATEGORIAS), progreso = () => {}, forzar = false) {
     if (!this.bbox) throw new Error('Define primero el área de trabajo.');
     const bb = this.bbox.join(',');
+    const archivo = forzar ? null : await this._predescargado();
     for (const [i, cat] of cats.entries()) {
       if (!forzar && this.datos[cat]) continue;
+      // 1) copia guardada en este dispositivo · 2) datos incluidos con la plataforma · 3) consulta en vivo
+      const guardado = forzar ? null : almacen.leer(this._clave(cat), null);
+      if (guardado) { this._usar(cat, guardado); continue; }
+      if (archivo?.categorias?.[cat]) { this._usar(cat, archivo.categorias[cat]); this.predescargado = archivo.fecha; continue; }
       progreso(`OpenStreetMap: ${CATEGORIAS[cat].nombre.toLowerCase()} (${i + 1}/${cats.length})…`);
       try {
         const q = `[out:json][timeout:40];(${CATEGORIAS[cat].consulta(bb, this.grande)});out center tags 4000;`;

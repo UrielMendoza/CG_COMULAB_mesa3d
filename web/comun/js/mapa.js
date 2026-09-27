@@ -60,17 +60,19 @@ function circuloAPoligono(c, radioM, n = 48) {
 export class Mapa {
   constructor(elId) {
     this.map = L.map(elId, { zoomControl: false, preferCanvas: false }).setView([19.3, -99.1], 8);
-    L.control.zoom({ position: 'topright' }).addTo(this.map);
+    // En el celular se acerca con dos dedos: sin botones de zoom queda espacio para las herramientas
+    this.esMovil = document.body.classList.contains('pagina-movil');
+    if (!this.esMovil) L.control.zoom({ position: 'topright' }).addTo(this.map);
     this.map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
 
     const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: 'Mapa y datos © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">colaboradores de OpenStreetMap</a>',
+      crossOrigin: true, maxZoom: 19, attribution: 'Mapa y datos © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">colaboradores de OpenStreetMap</a>',
     }).addTo(this.map);
     this.bases = {
       'OpenStreetMap': osm,
-      'OSM Humanitario': L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© colaboradores de OpenStreetMap · HOT' }),
-      'Relieve (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '© colaboradores de OpenStreetMap · SRTM · OpenTopoMap' }),
-      'Satélite (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Imágenes © Esri' }),
+      'OSM Humanitario': L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { crossOrigin: true, maxZoom: 19, attribution: '© colaboradores de OpenStreetMap · HOT' }),
+      'Relieve (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { crossOrigin: true, maxZoom: 17, attribution: '© colaboradores de OpenStreetMap · SRTM · OpenTopoMap' }),
+      'Satélite (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { crossOrigin: true, maxZoom: 19, attribution: 'Imágenes © Esri' }),
     };
 
     this.gEncuadre = L.featureGroup().addTo(this.map);
@@ -105,8 +107,10 @@ export class Mapa {
   _iniciarDibujo() {
     L.PM.setOptIn(true);         // solo el mapeo guardado es editable
     this.map.pm.setLang('es');
+    // Dibujo arriba a la izquierda y edición abajo a la izquierda: caben aunque el mapa
+    // ocupe solo la mitad de la pantalla (vista dividida cámara + mapa)
     this.map.pm.addControls({
-      position: 'topright',
+      positions: { draw: 'topleft', edit: 'bottomleft', custom: 'bottomleft', options: 'bottomleft' },
       drawCircleMarker: false, drawText: false, cutPolygon: false, rotateMode: false,
     });
     this.map.pm.setGlobalOptions({ pathOptions: { color: PALETA[6] } });

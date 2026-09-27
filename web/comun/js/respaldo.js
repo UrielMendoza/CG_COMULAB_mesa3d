@@ -28,7 +28,7 @@ export async function cargarRespaldo(mapa, juego) {
   let r;
   try {
     r = JSON.parse(await file.text());
-    if (r.app !== 'mesa3d') throw new Error('no es un respaldo de Mesa 3D');
+    if (r.app !== 'mesa3d') throw new Error('no es un respaldo de Cartografía sensorial');
   } catch (e) {
     return avisar(`No se pudo leer el respaldo: ${e.message}`, 'err');
   }
